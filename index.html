@@ -1,195 +1,213 @@
-import React, { useState, useEffect } from 'react';
-import { Search, ShoppingBag, Home, User, Menu, Copy } from 'lucide-react';
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>엠버언니 방송상품</title>
+    <!-- 디자인(Tailwind CSS)을 불러오는 코드 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 리액트(React)를 웹에서 바로 실행하게 해주는 코드 -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+</head>
+<body class="bg-gray-200">
+    <div id="root"></div>
 
-export default function App() {
-  const [allProducts, setAllProducts] = useState([]);
-  const [products, setProducts] = useState([]);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [toastMessage, setToastMessage] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
+    <!-- 여기서부터 실제 앱 작동 코드입니다 -->
+    <script type="text/babel">
+        const { useState, useEffect } = React;
 
-  // 구글 시트 데이터 불러오기
-  useEffect(() => {
-    const fetchSheetData = async () => {
-      try {
-        // 사장님이 주신 구글 시트 CSV 링크 적용!
-        const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT5i3ao2qfH8pe0kMYBxAzmzftmbi2QnxlkzUDm-caT-EG4UOYIE84iA5TwJGH9Sd-_TRLlT5f84GE6/pub?gid=1287250952&single=true&output=csv";
-        const response = await fetch(csvUrl);
-        const text = await response.text();
-        
-        // CSV 파싱 로직 (가격에 쉼표가 있을 수 있으므로 따옴표 처리)
-        const rows = text.split('\n');
-        const data = [];
-        
-        rows.forEach((row, index) => {
-          // 줄바꿈 등 불필요한 공백 제거
-          const cleanRow = row.replace(/\r/g, '').trim();
-          if (!cleanRow) return;
-          
-          const cols = [];
-          let current = '';
-          let inQuotes = false;
-          
-          for (let i = 0; i < cleanRow.length; i++) {
-            if (cleanRow[i] === '"') {
-              inQuotes = !inQuotes; // 따옴표 안쪽인지 상태만 변경
-            } else if (cleanRow[i] === ',' && !inQuotes) {
-              cols.push(current.trim());
-              current = '';
-            } else {
-              current += cleanRow[i];
+        // 화면에 쓰일 아이콘들 직접 그리기
+        const Search = ({ className, size = 24 }) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>;
+        const ShoppingBag = ({ className, size = 24 }) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"></path><path d="M3 6h18"></path><path d="M16 10a4 4 0 0 1-8 0"></path></svg>;
+        const Menu = ({ className, size = 24 }) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="18" x2="20" y2="18"></line></svg>;
+        const Copy = ({ className, size = 24 }) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>;
+
+        function App() {
+          const [allProducts, setAllProducts] = useState([]);
+          const [products, setProducts] = useState([]);
+          const [searchTerm, setSearchTerm] = useState("");
+          const [toastMessage, setToastMessage] = useState("");
+          const [isLoading, setIsLoading] = useState(true);
+
+          // 구글 시트 데이터 불러오기
+          useEffect(() => {
+            const fetchSheetData = async () => {
+              try {
+                // 사장님이 주신 구글 시트 CSV 링크!
+                const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT5i3ao2qfH8pe0kMYBxAzmzftmbi2QnxlkzUDm-caT-EG4UOYIE84iA5TwJGH9Sd-_TRLlT5f84GE6/pub?gid=1287250952&single=true&output=csv";
+                const response = await fetch(csvUrl);
+                const text = await response.text();
+                
+                // CSV 파싱 로직
+                const rows = text.split('\n');
+                const data = [];
+                
+                rows.forEach((row, index) => {
+                  const cleanRow = row.replace(/\r/g, '').trim();
+                  if (!cleanRow) return;
+                  
+                  const cols = [];
+                  let current = '';
+                  let inQuotes = false;
+                  
+                  for (let i = 0; i < cleanRow.length; i++) {
+                    if (cleanRow[i] === '"') {
+                      inQuotes = !inQuotes;
+                    } else if (cleanRow[i] === ',' && !inQuotes) {
+                      cols.push(current.trim());
+                      current = '';
+                    } else {
+                      current += cleanRow[i];
+                    }
+                  }
+                  cols.push(current.trim());
+                  
+                  if (cols[0]) {
+                    data.push({
+                      id: index,
+                      name: cols[0],
+                      price: cols[1] || '' 
+                    });
+                  }
+                });
+                
+                setAllProducts(data);
+                setProducts(data);
+                setIsLoading(false);
+              } catch (error) {
+                console.error("데이터를 불러오는데 실패했습니다.", error);
+                setIsLoading(false);
+              }
+            };
+
+            fetchSheetData();
+          }, []);
+
+          // 검색 필터링 로직
+          useEffect(() => {
+            let filtered = allProducts;
+            
+            if (searchTerm) {
+              filtered = filtered.filter(p => 
+                p.name.toLowerCase().includes(searchTerm.toLowerCase())
+              );
             }
-          }
-          cols.push(current.trim());
-          
-          // A열(상품명)이 비어있지 않은 데이터만 리스트에 추가
-          if (cols[0]) {
-            data.push({
-              id: index,
-              name: cols[0],
-              price: cols[1] || '' 
-            });
-          }
-        });
-        
-        setAllProducts(data);
-        setProducts(data);
-        setIsLoading(false);
-      } catch (error) {
-        console.error("데이터를 불러오는데 실패했습니다.", error);
-        setIsLoading(false);
-      }
-    };
+            
+            setProducts(filtered);
+          }, [searchTerm, allProducts]);
 
-    fetchSheetData();
-  }, []);
+          // 상품 정보 복사 함수
+          const handleCopy = (product) => {
+            const cleanPrice = product.price.replace(/[^0-9,]/g, '');
+            const textToCopy = `${product.name} ${cleanPrice}`;
+            
+            const textArea = document.createElement("textarea");
+            textArea.value = textToCopy;
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+              document.execCommand('copy');
+              setToastMessage(`'${product.name}' 복사 완료!`);
+              setTimeout(() => {
+                setToastMessage("");
+              }, 2000);
+            } catch (err) {
+              console.error('복사 실패', err);
+            }
+            document.body.removeChild(textArea);
+          };
 
-  // 검색 필터링 로직
-  useEffect(() => {
-    let filtered = allProducts;
-    
-    if (searchTerm) {
-      filtered = filtered.filter(p => 
-        p.name.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-    }
-    
-    setProducts(filtered);
-  }, [searchTerm, allProducts]);
+          return (
+            <div className="flex justify-center bg-gray-200 min-h-screen">
+              <div className="w-full max-w-md bg-white min-h-screen relative flex flex-col shadow-2xl overflow-hidden font-sans text-gray-800">
+                
+                <header className="bg-white px-4 py-3 sticky top-0 z-10 flex justify-between items-center border-b border-gray-100">
+                  <div className="flex items-center gap-2 text-lg font-bold text-gray-900">
+                    <ShoppingBag className="text-black" size={20} />
+                    <span>엠버언니 방송상품</span>
+                  </div>
+                  <button className="text-gray-500 hover:text-gray-900">
+                    <Menu size={24} />
+                  </button>
+                </header>
 
-  // 상품 정보 복사 함수
-  const handleCopy = (product) => {
-    // 금액에서 특수문자(₩) 및 불필요한 공백을 자동으로 제거
-    const cleanPrice = product.price.replace(/[^0-9,]/g, '');
-    const textToCopy = `${product.name} ${cleanPrice}`;
-    
-    // iframe 환경에서도 안전하게 복사하기 위한 로직
-    const textArea = document.createElement("textarea");
-    textArea.value = textToCopy;
-    document.body.appendChild(textArea);
-    textArea.select();
-    try {
-      document.execCommand('copy');
-      setToastMessage(`'${product.name}' 복사 완료!`);
-      setTimeout(() => {
-        setToastMessage("");
-      }, 2000);
-    } catch (err) {
-      console.error('복사 실패', err);
-    }
-    document.body.removeChild(textArea);
-  };
+                <main className="flex-1 overflow-y-auto pb-6 bg-gray-50">
+                  <div className="px-4 py-4 bg-white shadow-sm mb-2">
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <Search className="text-gray-400" size={16} />
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="상품명 또는 번호 검색..."
+                        className="block w-full pl-9 pr-3 py-3 bg-gray-100 border-transparent rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-black focus:border-transparent transition-all outline-none"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                      />
+                    </div>
+                  </div>
 
-  return (
-    <div className="flex justify-center bg-gray-200 min-h-screen">
-      {/* 모바일 화면 사이즈로 고정 (max-w-md) */}
-      <div className="w-full max-w-md bg-white min-h-screen relative flex flex-col shadow-2xl overflow-hidden font-sans text-gray-800">
-        
-        {/* 앱 스타일 상단 헤더 */}
-        <header className="bg-white px-4 py-3 sticky top-0 z-10 flex justify-between items-center border-b border-gray-100">
-          <div className="flex items-center gap-2 text-lg font-bold text-gray-900">
-            <ShoppingBag className="text-black" size={20} />
-            <span>엠버언니 방송상품</span>
-          </div>
-          <button className="text-gray-500 hover:text-gray-900">
-            <Menu size={24} />
-          </button>
-        </header>
+                  <div className="bg-white">
+                    {isLoading ? (
+                      <div className="text-center py-20 text-gray-500 text-sm">
+                        상품 정보를 불러오는 중입니다...
+                      </div>
+                    ) : products.length > 0 ? (
+                      <ul className="divide-y divide-gray-100">
+                        {products.map((product, index) => {
+                          const cleanPrice = product.price.replace(/[^0-9,]/g, '');
 
-        <main className="flex-1 overflow-y-auto pb-6 bg-gray-50">
-          {/* 검색바 */}
-          <div className="px-4 py-4 bg-white shadow-sm mb-2">
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Search className="h-4 w-4 text-gray-400" />
+                          return (
+                            <li 
+                              key={product.id} 
+                              className={`flex items-center justify-between py-4 px-4 hover:bg-gray-200 transition-colors group ${
+                                index % 2 === 0 ? 'bg-white' : 'bg-gray-50'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <span className="text-[15px] font-medium text-gray-800 leading-snug break-keep">
+                                  {product.name}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-3 shrink-0">
+                                <div className="text-base font-bold text-gray-900">
+                                  {cleanPrice}
+                                </div>
+                                <button 
+                                  onClick={() => handleCopy(product)}
+                                  className="p-1.5 px-2.5 text-gray-600 hover:text-blue-600 bg-white border border-gray-300 hover:bg-blue-50 hover:border-blue-300 rounded-lg transition-colors flex items-center gap-1.5 shadow-sm"
+                                >
+                                  <Copy size={14} />
+                                  <span className="text-[11px] font-bold">복사</span>
+                                </button>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : (
+                      <div className="text-center py-20 text-gray-500 text-sm">
+                        검색 결과가 없습니다.
+                      </div>
+                    )}
+                  </div>
+                </main>
+
+                {toastMessage && (
+                  <div className="absolute bottom-10 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg z-50 whitespace-nowrap">
+                    {toastMessage}
+                  </div>
+                )}
+                
               </div>
-              <input
-                type="text"
-                placeholder="상품명 또는 번호 검색..."
-                className="block w-full pl-9 pr-3 py-3 bg-gray-100 border-transparent rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-black focus:border-transparent transition-all outline-none"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
             </div>
-          </div>
+          );
+        }
 
-          {/* 깔끔한 텍스트 리스트 뷰 */}
-          <div className="bg-white">
-            {isLoading ? (
-              <div className="text-center py-20 text-gray-500 text-sm">
-                상품 정보를 불러오는 중입니다...
-              </div>
-            ) : products.length > 0 ? (
-              <ul className="divide-y divide-gray-100">
-                {products.map((product, index) => {
-                  // 화면에 표시할 때도 특수문자 제거
-                  const cleanPrice = product.price.replace(/[^0-9,]/g, '');
-
-                  return (
-                    <li 
-                      key={product.id} 
-                      // 줄마다 배경색을 교차로 다르게 주어(지브라 패턴) 가독성 향상
-                      className={`flex items-center justify-between py-4 px-4 hover:bg-gray-200 transition-colors group ${
-                        index % 2 === 0 ? 'bg-white' : 'bg-gray-50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="text-[15px] font-medium text-gray-800 leading-snug break-keep">
-                          {product.name}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3 shrink-0">
-                        <div className="text-base font-bold text-gray-900">
-                          {cleanPrice}
-                        </div>
-                        <button 
-                          onClick={() => handleCopy(product)}
-                          className="p-1.5 px-2.5 text-gray-600 hover:text-blue-600 bg-white border border-gray-300 hover:bg-blue-50 hover:border-blue-300 rounded-lg transition-colors flex items-center gap-1.5 shadow-sm"
-                        >
-                          <Copy size={14} />
-                          <span className="text-[11px] font-bold">복사</span>
-                        </button>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <div className="text-center py-20 text-gray-500 text-sm">
-                검색 결과가 없습니다.
-              </div>
-            )}
-          </div>
-        </main>
-
-        {/* 복사 완료 알림 (토스트 메시지) */}
-        {toastMessage && (
-          <div className="absolute bottom-10 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg z-50 whitespace-nowrap">
-            {toastMessage}
-          </div>
-        )}
-        
-      </div>
-    </div>
-  );
-}
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
