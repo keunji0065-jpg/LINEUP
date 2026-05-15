@@ -9,7 +9,8 @@
     <!-- 리액트(React)를 웹에서 바로 실행하게 해주는 코드 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    <!-- 최신 문법 지원을 위해 Babel 버전을 최신(@babel/standalone)으로 업데이트 -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
     <!-- 주문서와 동일한 폰트 및 스타일 적용 -->
     <style>
@@ -42,6 +43,12 @@
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #e5e7eb; }
         ::-webkit-scrollbar-thumb:hover { background: #d1d5db; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
     </style>
 </head>
 <body class="antialiased min-h-screen flex flex-col">
@@ -69,11 +76,11 @@
                 const response = await fetch(csvUrl);
                 const text = await response.text();
                 
-                const rows = text.split('\n');
-                const data = [];
+                const rows = text.replace(/\r/g, '').split('\n');
+                let data = [];
                 
                 rows.forEach((row, index) => {
-                  const cleanRow = row.replace(/\r/g, '').trim();
+                  const cleanRow = row.trim();
                   if (!cleanRow) return;
                   
                   const cols = [];
@@ -92,13 +99,25 @@
                   }
                   cols.push(current.trim());
                   
-                  if (cols[0]) {
+                  if (cols[0] && cols[0] !== "상품명" && cols[0] !== "단가") {
                     data.push({
                       id: index,
                       name: cols[0],
                       price: cols[1] || '' 
                     });
                   }
+                });
+
+                // 번호 기준 내림차순 정렬 (5 -> 4 -> 3 -> 2 -> 1)
+                // 구형 도구에서도 호환되도록 옵셔널 체이닝(?.)을 일반 조건문으로 수정
+                data.sort((a, b) => {
+                  const matchA = a.name.match(/^(\d+)/);
+                  const numA = matchA ? parseInt(matchA[0]) : 0;
+                  
+                  const matchB = b.name.match(/^(\d+)/);
+                  const numB = matchB ? parseInt(matchB[0]) : 0;
+                  
+                  return numB - numA;
                 });
                 
                 setAllProducts(data);
@@ -145,10 +164,8 @@
 
           return (
             <div className="flex justify-center min-h-screen">
-              {/* PC에서는 모바일 사이즈로 중앙 정렬 및 여백(그림자) 효과 */}
               <div className="w-full max-w-md bg-white min-h-screen relative flex flex-col shadow-2xl sm:my-10 sm:min-h-[800px] sm:rounded-none">
                 
-                {/* 시크한 브랜드 헤더 */}
                 <header className="py-6 text-center border-b-2 border-black flex-shrink-0 bg-white sticky top-0 z-20">
                   <h1 className="text-2xl font-serif text-black tracking-[0.2em] ml-1">EMBER</h1>
                   <p className="text-[10px] text-gray-500 tracking-[0.2em] uppercase mt-1">Official Lineup</p>
@@ -156,7 +173,6 @@
 
                 <main className="flex-1 flex flex-col bg-white">
                   
-                  {/* 날카로운 입력창 스타일 (input-chic 적용) */}
                   <div className="px-5 py-6">
                     <div className="relative">
                       <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
@@ -172,7 +188,6 @@
                     </div>
                   </div>
 
-                  {/* 상품 리스트 영역 */}
                   <div className="flex-1 overflow-y-auto">
                     {isLoading ? (
                       <div className="text-center py-20 text-gray-400 text-sm font-medium tracking-wider uppercase">
@@ -188,14 +203,12 @@
                               key={product.id} 
                               className="flex items-center justify-between py-4 px-5 hover:bg-[#fafafa] transition-colors group"
                             >
-                              {/* 상품명 */}
                               <div className="flex items-center gap-3 pr-4">
                                 <span className="text-[14px] font-medium text-black leading-snug break-keep tracking-wide">
                                   {product.name}
                                 </span>
                               </div>
                               
-                              {/* 가격 & 복사버튼 */}
                               <div className="flex items-center gap-4 shrink-0">
                                 <div className="text-[15px] font-bold text-black font-serif tracking-wider">
                                   {cleanPrice}
@@ -218,14 +231,12 @@
                     )}
                   </div>
                   
-                  {/* 하단 푸터 (주문서와 동일한 스타일) */}
                   <footer className="py-6 text-center text-gray-400 text-[10px] border-t border-gray-100 bg-white uppercase tracking-widest mt-auto">
                       <p className="mb-1">Ember Sister Official</p>
                       <p>System by. 깔로</p>
                   </footer>
                 </main>
 
-                {/* 복사 완료 알림 (시크한 블랙 사각형) */}
                 {toastMessage && (
                   <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 bg-black text-white px-6 py-3 text-sm font-bold tracking-wider shadow-xl z-50 whitespace-nowrap animate-fade-in">
                     {toastMessage}
