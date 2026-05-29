@@ -4,15 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>EMBER OFFICIAL LINEUP</title>
-    <!-- 디자인(Tailwind CSS)을 불러오는 코드 -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 리액트(React)를 웹에서 바로 실행하게 해주는 코드 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-    <!-- 최신 문법 지원을 위해 Babel 버전을 최신(@babel/standalone)으로 업데이트 -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- 주문서와 동일한 폰트 및 스타일 적용 -->
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,600;1,600&display=swap');
         
@@ -72,7 +68,8 @@
           useEffect(() => {
             const fetchSheetData = async () => {
               try {
-                const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT5i3ao2qfH8pe0kMYBxAzmzftmbi2QnxlkzUDm-caT-EG4UOYIE84iA5TwJGH9Sd-_TRLlT5f84GE6/pub?gid=1287250952&single=true&output=csv";
+                // 새로운 구글 시트 CSV 주소로 변경 완료
+                const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRI6cW1MyLv5gbcfsjEyYuMDWdL6jDit_Fuz2ZNXPKwEJZeedXoNorHHhUdsoDnDxBzzrFu6P72WVOy/pub?gid=1797935796&single=true&output=csv";
                 const response = await fetch(csvUrl);
                 const text = await response.text();
                 
@@ -99,16 +96,20 @@
                   }
                   cols.push(current.trim());
                   
-                  if (cols[0] && cols[0] !== "상품명" && cols[0] !== "단가") {
-                    data.push({
-                      id: index,
-                      name: cols[0],
-                      price: cols[1] || '' 
-                    });
+                  // 첫 줄 헤더(name, price 등) 제외 로직 수정
+                  if (cols[0]) {
+                    const firstColLower = cols[0].toLowerCase();
+                    if (firstColLower !== "name" && firstColLower !== "price" && firstColLower !== "상품명") {
+                      data.push({
+                        id: index,
+                        name: cols[0],
+                        price: cols[1] || '' 
+                      });
+                    }
                   }
                 });
 
-                // 번호 기준 내림차순 정렬 (5 -> 4 -> 3 -> 2 -> 1)
+                // 번호 기준 내림차순 정렬 (숫자가 없으면 문자 순으로 정렬)
                 data.sort((a, b) => {
                   const matchA = a.name.match(/^(\d+)/);
                   const numA = matchA ? parseInt(matchA[0]) : 0;
@@ -116,7 +117,10 @@
                   const matchB = b.name.match(/^(\d+)/);
                   const numB = matchB ? parseInt(matchB[0]) : 0;
                   
-                  return numB - numA;
+                  if (numA === 0 && numB === 0) {
+                    return a.name.localeCompare(b.name); // 둘 다 숫자가 없으면 글자순 정렬
+                  }
+                  return numB - numA; // 숫자가 있으면 기존처럼 내림차순 정렬
                 });
                 
                 setAllProducts(data);
@@ -165,7 +169,7 @@
             <div className="flex justify-center min-h-screen">
               <div className="w-full max-w-md bg-white min-h-screen relative flex flex-col shadow-2xl sm:my-10 sm:min-h-[800px] sm:rounded-none">
                 
-                {/* 상단 블랙 헤더로 변경 */}
+                {/* 상단 블랙 헤더 */}
                 <header className="py-8 text-center bg-black flex-shrink-0 sticky top-0 z-20">
                   <h1 className="text-2xl font-serif text-white tracking-[0.25em] ml-1 uppercase">EMBER</h1>
                   <p className="text-[10px] text-gray-400 tracking-[0.2em] uppercase mt-1">Official Lineup</p>
