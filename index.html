@@ -51,7 +51,6 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        // useRef 추가 (스크롤 감지용)
         const { useState, useEffect, useRef } = React;
 
         const SearchIcon = ({ size = 18 }) => (
@@ -64,23 +63,27 @@
           const [searchTerm, setSearchTerm] = useState("");
           const [toastMessage, setToastMessage] = useState("");
           const [isLoading, setIsLoading] = useState(true);
-          const [selectedImage, setSelectedImage] = useState(null); 
+          const [selectedImage, setSelectedImage] = useState(null);
 
-          // 맨 위로 가기 버튼 관련 상태 및 참조
+          // TOP 버튼 상태 및 스크롤 참조
           const [showTopBtn, setShowTopBtn] = useState(false);
           const scrollContainerRef = useRef(null);
 
-          // 장바구니(다중 선택) 상태 - 브라우저 메모리(localStorage) 연동
-          const [selectedNames, setSelectedNames] = useState(() => {
+          // 수량까지 기억하는 장바구니 상태 (v2)
+          const [cartItems, setCartItems] = useState(() => {
             try {
-              const saved = localStorage.getItem('ember_cart');
-              return saved ? JSON.parse(saved) : [];
+              const saved = localStorage.getItem('ember_cart_v2');
+              return saved ? JSON.parse(saved) : {};
             } catch (e) {
-              return [];
+              return {};
             }
           });
 
-          // 데이터 불러오기
+          // 체크 항목이나 수량이 바뀔 때마다 폰에 자동 저장
+          useEffect(() => {
+            localStorage.setItem('ember_cart_v2', JSON.stringify(cartItems));
+          }, [cartItems]);
+
           useEffect(() => {
             const fetchSheetData = async () => {
               try {
@@ -126,15 +129,15 @@
                           id: index,
                           name: cols[0],
                           price: cols[1] || '',
-                          status: cols[2] ? cols[2].trim() : '',   
-                          imageUrl: cols[3] ? cols[3].trim() : ''  
+                          status: cols[2] ? cols[2].trim() : '',   // C열: 품절
+                          imageUrl: cols[3] ? cols[3].trim() : ''  // D열: 사진
                         });
                       }
                     }
                   }
                 });
 
-                // 번호 기준 정렬 (숫자 내림차순, 없으면 가나다순)
+                // 사장님이 작성하신 정렬 로직 완벽 유지
                 data.sort((a, b) => {
                   const matchA = a.name.match(/^(\d+)/);
                   const numA = matchA ? parseInt(matchA[0]) : 0;
@@ -151,20 +154,29 @@
                 setAllProducts(data);
                 setProducts(data);
 
-                // 🚨 자동 클렌징(Auto-Cleansing) 로직: 새 방송 시작 시 옛날 장바구니 리셋
-                setSelectedNames(prevCart => {
+                // 자동 클렌징: 라인업에 없는 상품 장바구니에서 삭제
+                setCartItems(prevCart => {
                   const currentProductNames = data.map(p => p.name);
-                  const validCartItems = prevCart.filter(cartItem => currentProductNames.includes(cartItem));
+                  const newCart = {};
+                  let isChanged = false;
                   
-                  if (validCartItems.length !== prevCart.length) {
-                    localStorage.setItem('ember_cart', JSON.stringify(validCartItems));
+                  Object.keys(prevCart).forEach(name => {
+                    if (currentProductNames.includes(name)) {
+                      newCart[name] = prevCart[name];
+                    } else {
+                      isChanged = true;
+                    }
+                  });
+                  
+                  if (isChanged) {
+                    localStorage.setItem('ember_cart_v2', JSON.stringify(newCart));
                   }
-                  return validCartItems;
+                  return newCart;
                 });
 
                 setIsLoading(false);
               } catch (error) {
-                console.error("데이터를 불러오는데 실패했습니다.", error);
+                console.error("데이터 불러오기 실패", error);
                 setIsLoading(false);
               }
             };
@@ -172,7 +184,7 @@
             fetchSheetData();
           }, []);
 
-          // 검색 필터
+          // 검색 기능
           useEffect(() => {
             let filtered = allProducts;
             if (searchTerm) {
@@ -183,12 +195,7 @@
             setProducts(filtered);
           }, [searchTerm, allProducts]);
 
-          // 장바구니 변경 시 저장
-          useEffect(() => {
-            localStorage.setItem('ember_cart', JSON.stringify(selectedNames));
-          }, [selectedNames]);
-
-          // 스크롤 감지 (TOP 버튼 표시용)
+          // 스크롤 감지 함수 (TOP 버튼용)
           const handleScroll = (e) => {
             if (e.target.scrollTop > 300) {
               setShowTopBtn(true);
@@ -197,37 +204,77 @@
             }
           };
 
-          // 맨 위로 부드럽게 스크롤
           const scrollToTop = () => {
             if (scrollContainerRef.current) {
               scrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
             }
           };
 
+          const showToast = (message) => {
+              setToastMessage(message);
+              setTimeout(() => setToastMessage(""), 2000);
+          }
+
+          // 장바구니 항목 체크/해제
           const toggleSelection = (productName) => {
-            setSelectedNames(prev => 
-              prev.includes(productName) 
-                ? prev.filter(name => name !== productName) 
-                : [...prev, productName]
-            );
+            setCartItems(prev => {
+              const newCart = { ...prev };
+              if (newCart[productName]) {
+                delete newCart[productName]; 
+              } else {
+                newCart[productName] = 1; 
+              }
+              return newCart;
+            });
           };
 
-          // 총 금액 계산
-          const selectedProducts = allProducts.filter(p => selectedNames.includes(p.name));
-          const totalPrice = selectedProducts.reduce((sum, p) => {
-            const num = parseInt(p.price.replace(/[^0-9]/g, ''), 10);
-            return sum + (isNaN(num) ? 0 : num);
+          // 수량 +, - 조절
+          const updateQuantity = (productName, delta, e) => {
+            e.stopPropagation(); // 체크박스 동시 클릭 방지
+            setCartItems(prev => {
+              const newCart = { ...prev };
+              const currentQty = newCart[productName] || 0;
+              const nextQty = currentQty + delta;
+              
+              if (nextQty > 0) {
+                newCart[productName] = nextQty;
+              } else {
+                delete newCart[productName];
+              }
+              return newCart;
+            });
+          };
+
+          // 총 수량 및 총액 계산
+          const selectedKeys = Object.keys(cartItems);
+          const totalItemCount = Object.values(cartItems).reduce((a, b) => a + b, 0);
+
+          const totalPrice = allProducts.reduce((sum, p) => {
+            if (cartItems[p.name]) {
+              const num = parseInt(p.price.replace(/[^0-9]/g, ''), 10);
+              return sum + (isNaN(num) ? 0 : num) * cartItems[p.name];
+            }
+            return sum;
           }, 0);
 
           // 다중 복사 기능
           const handleCopyAll = () => {
-            if (selectedProducts.length === 0) return;
+            if (selectedKeys.length === 0) return;
             
-            let textToCopy = selectedProducts.map(p => {
-               const num = parseInt(p.price.replace(/[^0-9]/g, ''), 10);
-               const formattedPrice = isNaN(num) ? p.price : num.toLocaleString();
-               return `${p.name} ${formattedPrice}`;
-            }).join('\n');
+            let textToCopy = allProducts
+              .filter(p => cartItems[p.name])
+              .map(p => {
+                 const num = parseInt(p.price.replace(/[^0-9]/g, ''), 10);
+                 const priceVal = isNaN(num) ? 0 : num;
+                 const qty = cartItems[p.name];
+                 const formattedPrice = isNaN(num) ? p.price : num.toLocaleString();
+                 
+                 if (qty > 1) {
+                   const itemTotal = priceVal * qty;
+                   return `${p.name} ${formattedPrice} x ${qty}개 = ${itemTotal.toLocaleString()}`;
+                 }
+                 return `${p.name} ${formattedPrice}`;
+              }).join('\n');
             
             textToCopy += `\n------------------\n총 상품 금액: ${totalPrice.toLocaleString()}원`;
 
@@ -239,14 +286,29 @@
             textArea.select();
             try {
               document.execCommand('copy');
-              showToast(`총 ${selectedProducts.length}개 상품 복사 완료!`);
-            } catch (err) {
-              console.error('복사 실패', err);
-            }
+              showToast(`총 ${selectedKeys.length}개 상품 복사 완료!`);
+            } catch (err) {}
             document.body.removeChild(textArea);
           };
 
-          // 단일 상품 복사 기능
+          // [추가] 계좌번호 복사 기능
+          const handleCopyAccount = () => {
+            const accountInfo = "카카오뱅크 7942-32-84990 김선정"; 
+            
+            const textArea = document.createElement("textarea");
+            textArea.value = accountInfo;
+            textArea.style.position = "fixed";
+            textArea.style.left = "-9999px";
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+              document.execCommand('copy');
+              showToast("계좌번호가 복사되었습니다.");
+            } catch (err) {}
+            document.body.removeChild(textArea);
+          };
+
+          // 단일 복사 기능
           const handleCopy = (product, formattedPrice) => {
             const textToCopy = `${product.name} ${formattedPrice}`;
             const textArea = document.createElement("textarea");
@@ -257,30 +319,24 @@
             textArea.select();
             try {
               document.execCommand('copy');
-              showToast(product.name);
+              showToast(`복사 완료: ${product.name}`);
             } catch (err) {}
             document.body.removeChild(textArea);
           };
 
-          const showToast = (message) => {
-              setToastMessage(message);
-              setTimeout(() => setToastMessage(""), 2000);
-          }
-
           return (
-            // 1. 전체 레이아웃을 화면 꽉 차게(100dvh) 고정시켜서 하단 결제 바가 항상 화면 밑에 붙어있게 만듭니다.
             <div className="flex justify-center sm:items-center w-full" style={{ height: '100dvh' }}>
               <div className="w-full max-w-md bg-white h-full relative flex flex-col shadow-2xl sm:h-[800px] sm:rounded-none overflow-hidden">
                 
-                {/* 상단 블랙 헤더 여백(py)과 글씨 크기 축소 */}
-                <header className="py-4 text-center bg-black flex-shrink-0 z-20">
+                {/* 상단 블랙 헤더 (계좌복사 버튼은 하단으로 이동시켰습니다) */}
+                <header className="py-4 text-center bg-black flex-shrink-0 z-20 relative">
                   <h1 className="text-xl font-serif text-white tracking-[0.25em] ml-1 uppercase">EMBER</h1>
                   <p className="text-[9px] text-gray-400 tracking-[0.2em] uppercase mt-0.5">Official Lineup</p>
                 </header>
 
                 <main className="flex-1 flex flex-col bg-white overflow-hidden">
                   
-                  {/* 검색창 상하 여백(py)을 절반으로 줄이고, 입력칸 자체의 높이도 슬림하게 조정 */}
+                  {/* 검색창 */}
                   <div className="px-5 py-3 border-b border-gray-100 flex-shrink-0">
                     <div className="relative">
                       <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
@@ -296,15 +352,15 @@
                     </div>
                   </div>
 
-                  {/* 안내 멘트 배너: 글씨 크기를 키우고 가독성 확보 (한 줄 유지) */}
-                  <div className="bg-[#f9fafb] px-4 py-3 border-b border-gray-100 flex items-center justify-center gap-2 flex-shrink-0 overflow-hidden">
-                    <span className="text-[15px] shrink-0">💡</span>
-                    <p className="text-[12.5px] sm:text-[13px] text-gray-600 font-medium tracking-tight whitespace-nowrap">
+                  {/* 안내 멘트 */}
+                  <div className="bg-[#f9fafb] px-4 py-3 border-b border-gray-100 flex items-center justify-center gap-1.5 flex-shrink-0 overflow-hidden">
+                    <span className="text-[14px] shrink-0">💡</span>
+                    <p className="text-[min(12.5px,3.5vw)] text-gray-600 font-medium tracking-tight whitespace-nowrap truncate">
                       체크박스를 선택하면 여러 상품을 <strong className="text-black">한 번에 복사</strong>할 수 있습니다.
                     </p>
                   </div>
 
-                  {/* 스크롤 감지 영역 (이 부분만 스크롤되도록 구조 변경 완료) */}
+                  {/* 스크롤 가능한 상품 목록 영역 */}
                   <div 
                     className="flex-1 overflow-y-auto pb-20"
                     ref={scrollContainerRef}
@@ -329,13 +385,13 @@
                             >
                               <div className="flex items-center gap-3 pr-4">
                                 
-                                {/* 장바구니 체크박스 */}
+                                {/* 시크한 체크박스 */}
                                 <div 
                                   className="shrink-0 flex items-center justify-center cursor-pointer py-2 pr-1"
                                   onClick={() => toggleSelection(product.name)}
                                 >
-                                  <div className={`w-5 h-5 border flex items-center justify-center transition-colors ${selectedNames.includes(product.name) ? 'bg-black border-black' : 'bg-white border-gray-300'}`}>
-                                    {selectedNames.includes(product.name) && (
+                                  <div className={`w-5 h-5 border flex items-center justify-center transition-colors ${cartItems[product.name] ? 'bg-black border-black' : 'bg-white border-gray-300'}`}>
+                                    {cartItems[product.name] && (
                                       <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 text-white" viewBox="0 0 20 20" fill="currentColor">
                                         <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                                       </svg>
@@ -343,6 +399,7 @@
                                   </div>
                                 </div>
 
+                                {/* 썸네일 */}
                                 {product.imageUrl && (
                                   <div 
                                     className="w-10 h-10 shrink-0 cursor-pointer overflow-hidden rounded-sm border border-gray-200 shadow-sm"
@@ -352,14 +409,37 @@
                                   </div>
                                 )}
                                 
-                                <div className="flex items-center gap-2">
-                                  <span className={`text-[14px] font-medium leading-snug break-keep tracking-wide ${isSoldOut ? 'text-gray-500' : 'text-black'}`}>
-                                    {product.name}
-                                  </span>
-                                  {isSoldOut && (
-                                    <span className="text-[10px] bg-red-600 text-white px-1.5 py-0.5 tracking-wider font-bold shrink-0">
-                                      품절
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`text-[14px] font-medium leading-snug break-keep tracking-wide ${isSoldOut ? 'text-gray-500' : 'text-black'}`}>
+                                      {product.name}
                                     </span>
+                                    {isSoldOut && (
+                                      <span className="text-[10px] bg-red-600 text-white px-1.5 py-0.5 tracking-wider font-bold shrink-0">
+                                        품절
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* 수량 조절 컨트롤러 (체크박스를 선택했을 때만 마법처럼 나타납니다!) */}
+                                  {cartItems[product.name] && (
+                                    <div className="flex items-center mt-1 w-20 border border-gray-300 overflow-hidden bg-white h-6 rounded-sm animate-fade-in">
+                                      <button 
+                                        onClick={(e) => updateQuantity(product.name, -1, e)}
+                                        className="w-7 h-full text-gray-500 flex items-center justify-center hover:bg-gray-100 text-lg font-light leading-none active:bg-gray-200"
+                                      >
+                                        -
+                                      </button>
+                                      <div className="flex-1 h-full flex items-center justify-center text-[11px] font-bold border-l border-r border-gray-300 text-black bg-[#fafafa]">
+                                        {cartItems[product.name]}
+                                      </div>
+                                      <button 
+                                        onClick={(e) => updateQuantity(product.name, 1, e)}
+                                        className="w-7 h-full text-gray-500 flex items-center justify-center hover:bg-gray-100 text-lg font-light leading-none active:bg-gray-200"
+                                      >
+                                        +
+                                      </button>
+                                    </div>
                                   )}
                                 </div>
                               </div>
@@ -384,36 +464,42 @@
                         검색 결과가 없습니다.
                       </div>
                     )}
-                    
-                    {/* 하단 여백 및 카피라이트 */}
-                    <footer className={`py-8 text-center text-gray-400 text-[10px] border-t border-gray-100 bg-white uppercase tracking-widest mt-auto ${selectedNames.length > 0 ? 'pb-28' : ''}`}>
-                        <p className="mb-1">Ember Sister Official</p>
-                        <p>System by. 깔로</p>
-                    </footer>
                   </div>
+                  
+                  {/* 푸터 */}
+                  <footer className={`py-8 text-center text-gray-400 text-[10px] border-t border-gray-100 bg-white uppercase tracking-widest mt-auto ${selectedKeys.length > 0 ? 'pb-28' : ''}`}>
+                      <p className="mb-1">Ember Sister Official</p>
+                      <p>System by. 깔로</p>
+                  </footer>
                 </main>
 
-                {/* 다중 선택 하단 결제 바 */}
-                {selectedNames.length > 0 && (
-                  <div className="absolute bottom-0 left-0 right-0 bg-black text-white px-5 py-4 flex items-center justify-between z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.15)] animate-fade-in">
-                    <div className="flex flex-col">
-                      <div className="text-[10px] text-gray-400 tracking-wider mb-0.5">
-                        {selectedNames.length}개 상품 선택됨
+                {/* 다중 선택 하단 결제 바 (초기화 버튼 옆에 계좌복사 추가) */}
+                {selectedKeys.length > 0 && (
+                  <div className="absolute bottom-0 left-0 right-0 bg-black text-white px-3 sm:px-5 py-4 flex items-center justify-between z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.15)] animate-fade-in">
+                    <div className="flex flex-col shrink-0 pr-2">
+                      <div className="text-[9px] text-gray-400 tracking-wider mb-0.5">
+                        {totalItemCount}개 선택됨
                       </div>
-                      <div className="text-lg font-bold font-serif tracking-widest">
+                      <div className="text-[15px] sm:text-lg font-bold font-serif tracking-widest">
                         {totalPrice.toLocaleString()}
                       </div>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-1.5 sm:gap-2 shrink-0">
                       <button 
-                        onClick={() => setSelectedNames([])}
-                        className="px-3 py-2 border border-gray-600 text-gray-300 text-[10px] font-bold tracking-widest uppercase hover:bg-gray-800 transition-colors"
+                        onClick={handleCopyAccount}
+                        className="px-2 sm:px-3 py-2 border border-gray-600 text-gray-300 text-[10px] font-bold tracking-wider hover:bg-gray-800 transition-colors"
+                      >
+                        계좌복사
+                      </button>
+                      <button 
+                        onClick={() => setCartItems({})}
+                        className="px-2 sm:px-3 py-2 border border-gray-600 text-gray-300 text-[10px] font-bold tracking-wider hover:bg-gray-800 transition-colors"
                       >
                         초기화
                       </button>
                       <button 
                         onClick={handleCopyAll}
-                        className="px-4 py-2 bg-white text-black text-[12px] font-bold tracking-widest uppercase hover:bg-gray-200 transition-colors"
+                        className="px-3 sm:px-4 py-2 bg-white text-black text-[10px] sm:text-[12px] font-bold tracking-widest hover:bg-gray-200 transition-colors"
                       >
                         전체 복사
                       </button>
@@ -421,11 +507,11 @@
                   </div>
                 )}
 
-                {/* 맨 위로 가기 (TOP) 버튼 */}
+                {/* TOP 버튼 */}
                 {showTopBtn && (
                   <button
                     onClick={scrollToTop}
-                    className={`absolute right-6 w-11 h-11 bg-black text-white rounded-full shadow-[0_4px_14px_0_rgba(0,0,0,0.39)] flex items-center justify-center animate-fade-in z-30 hover:scale-105 transition-transform ${selectedNames.length > 0 ? 'bottom-24' : 'bottom-10'}`}
+                    className={`absolute right-6 w-11 h-11 bg-black text-white rounded-full shadow-[0_4px_14px_0_rgba(0,0,0,0.39)] flex items-center justify-center animate-fade-in z-30 hover:scale-105 transition-transform ${selectedKeys.length > 0 ? 'bottom-24' : 'bottom-10'}`}
                     aria-label="맨 위로 가기"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -434,14 +520,14 @@
                   </button>
                 )}
 
-                {/* 토스트 메시지 */}
+                {/* 알림 토스트 */}
                 {toastMessage && (
                   <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-black text-white px-6 py-4 text-[13px] font-bold tracking-widest shadow-2xl z-50 whitespace-nowrap animate-fade-in border border-white/20 rounded-md">
                     {toastMessage}
                   </div>
                 )}
                 
-                {/* 사진 모달창 */}
+                {/* 사진 팝업 모달 */}
                 {selectedImage && (
                   <div 
                     className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-80 p-5 animate-fade-in"
