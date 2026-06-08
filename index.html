@@ -296,10 +296,10 @@
                     </div>
                   </div>
 
-                  {/* 안내 멘트 배너: 글씨를 짧게 다듬고, 화면 크기에 맞춰 무조건 한 줄에 쏙 들어가게 자동 축소 적용 */}
-                  <div className="bg-[#f9fafb] px-4 py-2.5 border-b border-gray-100 flex items-center justify-center gap-1.5 flex-shrink-0 overflow-hidden">
-                    <span className="text-[min(12px,3.5vw)] shrink-0">💡</span>
-                    <p className="text-[min(11px,3.2vw)] text-gray-600 font-medium tracking-tight whitespace-nowrap">
+                  {/* 안내 멘트 배너: 글씨 크기를 키우고 가독성 확보 (한 줄 유지) */}
+                  <div className="bg-[#f9fafb] px-4 py-3 border-b border-gray-100 flex items-center justify-center gap-2 flex-shrink-0 overflow-hidden">
+                    <span className="text-[15px] shrink-0">💡</span>
+                    <p className="text-[12.5px] sm:text-[13px] text-gray-600 font-medium tracking-tight whitespace-nowrap">
                       체크박스를 선택하면 여러 상품을 <strong className="text-black">한 번에 복사</strong>할 수 있습니다.
                     </p>
                   </div>
