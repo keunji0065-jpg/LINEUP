@@ -268,17 +268,20 @@
           }
 
           return (
-            <div className="flex justify-center min-h-screen">
-              <div className="w-full max-w-md bg-white min-h-screen relative flex flex-col shadow-2xl sm:my-10 sm:min-h-[800px] sm:rounded-none">
+            // 1. 전체 레이아웃을 화면 꽉 차게(100dvh) 고정시켜서 하단 결제 바가 항상 화면 밑에 붙어있게 만듭니다.
+            <div className="flex justify-center sm:items-center w-full" style={{ height: '100dvh' }}>
+              <div className="w-full max-w-md bg-white h-full relative flex flex-col shadow-2xl sm:h-[800px] sm:rounded-none overflow-hidden">
                 
-                <header className="py-8 text-center bg-black flex-shrink-0 sticky top-0 z-20">
-                  <h1 className="text-2xl font-serif text-white tracking-[0.25em] ml-1 uppercase">EMBER</h1>
-                  <p className="text-[10px] text-gray-400 tracking-[0.2em] uppercase mt-1">Official Lineup</p>
+                {/* 상단 블랙 헤더 여백(py)과 글씨 크기 축소 */}
+                <header className="py-4 text-center bg-black flex-shrink-0 z-20">
+                  <h1 className="text-xl font-serif text-white tracking-[0.25em] ml-1 uppercase">EMBER</h1>
+                  <p className="text-[9px] text-gray-400 tracking-[0.2em] uppercase mt-0.5">Official Lineup</p>
                 </header>
 
                 <main className="flex-1 flex flex-col bg-white overflow-hidden">
                   
-                  <div className="px-5 py-6 border-b border-gray-100 flex-shrink-0">
+                  {/* 검색창 상하 여백(py)을 절반으로 줄이고, 입력칸 자체의 높이도 슬림하게 조정 */}
+                  <div className="px-5 py-3 border-b border-gray-100 flex-shrink-0">
                     <div className="relative">
                       <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
                         <SearchIcon className="text-gray-400" />
@@ -286,14 +289,22 @@
                       <input
                         type="text"
                         placeholder="상품명 또는 번호를 검색하세요"
-                        className="w-full pl-11 pr-4 py-3.5 input-chic text-sm font-medium tracking-wide text-black placeholder-gray-400"
+                        className="w-full pl-11 pr-4 py-2.5 input-chic text-sm font-medium tracking-wide text-black placeholder-gray-400"
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                       />
                     </div>
                   </div>
 
-                  {/* 스크롤 감지 영역 (ref 추가, onScroll 이벤트 추가) */}
+                  {/* 안내 멘트 배너: 글씨를 짧게 다듬고, 화면 크기에 맞춰 무조건 한 줄에 쏙 들어가게 자동 축소 적용 */}
+                  <div className="bg-[#f9fafb] px-4 py-2.5 border-b border-gray-100 flex items-center justify-center gap-1.5 flex-shrink-0 overflow-hidden">
+                    <span className="text-[min(12px,3.5vw)] shrink-0">💡</span>
+                    <p className="text-[min(11px,3.2vw)] text-gray-600 font-medium tracking-tight whitespace-nowrap">
+                      체크박스를 선택하면 여러 상품을 <strong className="text-black">한 번에 복사</strong>할 수 있습니다.
+                    </p>
+                  </div>
+
+                  {/* 스크롤 감지 영역 (이 부분만 스크롤되도록 구조 변경 완료) */}
                   <div 
                     className="flex-1 overflow-y-auto pb-20"
                     ref={scrollContainerRef}
