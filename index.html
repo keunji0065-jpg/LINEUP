@@ -6,11 +6,13 @@
     <title>EMBER OFFICIAL LINEUP</title>
     <!-- 디자인(Tailwind CSS) -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 리액트(React) -->
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
+    <!-- 🚨 [매우 중요] 하얗게 뜨는 현상 방지: 불안정한 unpkg 대신 가장 안정적인 cdnjs 사용 및 버전 영구 고정 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js" crossorigin="anonymous"></script>
+    
+    <!-- 주문서와 동일한 폰트 및 스타일 적용 -->
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;1,600&display=swap');
         
@@ -22,6 +24,7 @@
         .font-serif { font-family: 'Playfair Display', serif; }
         .break-keep { word-break: keep-all; }
         
+        /* 시크한 입력창 스타일 */
         .input-chic {
             border-radius: 0;
             border: 1px solid #d1d5db;
@@ -35,6 +38,7 @@
             outline: none;
         }
 
+        /* 스크롤바 커스텀 */
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #e5e7eb; }
@@ -48,10 +52,47 @@
     </style>
 </head>
 <body class="antialiased min-h-screen flex flex-col">
-    <div id="root"></div>
+    <!-- 🚨 스크립트 로딩 지연 시 하얀 화면 대신 보여줄 기본 안내문 -->
+    <div id="root">
+        <div style="display:flex; height:100vh; align-items:center; justify-content:center; color:#9ca3af; font-size:14px;">
+            라인업을 불러오는 중입니다... 잠시만 기다려주세요.
+        </div>
+    </div>
 
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
+
+        // 🚨 리액트 앱이 뻗었을 때 하얀 화면 대신 에러 안내를 띄워주는 강력한 방어막
+        class ErrorBoundary extends React.Component {
+            constructor(props) {
+                super(props);
+                this.state = { hasError: false };
+            }
+            static getDerivedStateFromError(error) {
+                return { hasError: true };
+            }
+            componentDidCatch(error, errorInfo) {
+                console.error("화면 렌더링 중 오류 발생:", error, errorInfo);
+            }
+            render() {
+                if (this.state.hasError) {
+                    return (
+                        <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-center px-5">
+                            <div className="text-4xl mb-4">⚠️</div>
+                            <h2 className="text-lg font-bold text-black mb-2">일시적인 오류가 발생했습니다.</h2>
+                            <p className="text-sm text-gray-500 mb-6">데이터를 불러오는 중 문제가 생겼습니다.<br/>아래 버튼을 눌러 다시 시도해주세요.</p>
+                            <button 
+                                onClick={() => window.location.reload()} 
+                                className="px-6 py-3 bg-black text-white text-sm font-bold tracking-widest uppercase rounded-sm"
+                            >
+                                새로고침 하기
+                            </button>
+                        </div>
+                    );
+                }
+                return this.props.children;
+            }
+        }
 
         const SearchIcon = ({ size = 18 }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
@@ -65,24 +106,22 @@
           const [isLoading, setIsLoading] = useState(true);
           const [selectedImage, setSelectedImage] = useState(null);
 
-          // TOP 버튼 상태 및 스크롤 참조
           const [showTopBtn, setShowTopBtn] = useState(false);
           const scrollContainerRef = useRef(null);
 
-          // 수량까지 기억하는 장바구니 상태 (v2)
-          const [cartItems, setCartItems] = useState(() => {
+          // 장바구니 상태 복원 및 저장
+          const [selectedNames, setSelectedNames] = useState(() => {
             try {
-              const saved = localStorage.getItem('ember_cart_v2');
-              return saved ? JSON.parse(saved) : {};
+              const saved = localStorage.getItem('ember_cart');
+              return saved ? JSON.parse(saved) : [];
             } catch (e) {
-              return {};
+              return [];
             }
           });
 
-          // 체크 항목이나 수량이 바뀔 때마다 폰에 자동 저장
           useEffect(() => {
-            localStorage.setItem('ember_cart_v2', JSON.stringify(cartItems));
-          }, [cartItems]);
+            localStorage.setItem('ember_cart', JSON.stringify(selectedNames));
+          }, [selectedNames]);
 
           useEffect(() => {
             const fetchSheetData = async () => {
@@ -114,30 +153,30 @@
                   }
                   cols.push(current.trim());
                   
+                  // 🚨 데이터 오류 방어막: 강제로 문자로 변환(String)하여 에러 발생 원천 차단
                   if (cols[0]) {
-                    const firstColLower = cols[0].toLowerCase();
+                    const firstColLower = String(cols[0]).toLowerCase();
                     if (firstColLower !== "name" && firstColLower !== "price" && firstColLower !== "상품명") {
                       
-                      // 0이나 - 가격 필터링 (메모용 숨김 처리)
-                      const rawPrice = cols[1] ? cols[1].trim() : '';
+                      const rawPrice = cols[1] ? String(cols[1]).trim() : '';
                       const numOnly = rawPrice.replace(/[^0-9-]/g, '');
                       const priceNum = parseInt(numOnly, 10);
+                      
                       const isMemo = rawPrice === '-' || (!isNaN(priceNum) && priceNum <= 0);
 
                       if (!isMemo) {
                         data.push({
                           id: index,
-                          name: cols[0],
+                          name: String(cols[0]),
                           price: cols[1] || '',
-                          status: cols[2] ? cols[2].trim() : '',   // C열: 품절
-                          imageUrl: cols[3] ? cols[3].trim() : ''  // D열: 사진
+                          status: cols[2] ? String(cols[2]).trim() : '',
+                          imageUrl: cols[3] ? String(cols[3]).trim() : ''
                         });
                       }
                     }
                   }
                 });
 
-                // 사장님이 작성하신 정렬 로직 완벽 유지
                 data.sort((a, b) => {
                   const matchA = a.name.match(/^(\d+)/);
                   const numA = matchA ? parseInt(matchA[0]) : 0;
@@ -154,37 +193,24 @@
                 setAllProducts(data);
                 setProducts(data);
 
-                // 자동 클렌징: 라인업에 없는 상품 장바구니에서 삭제
-                setCartItems(prevCart => {
-                  const currentProductNames = data.map(p => p.name);
-                  const newCart = {};
-                  let isChanged = false;
-                  
-                  Object.keys(prevCart).forEach(name => {
-                    if (currentProductNames.includes(name)) {
-                      newCart[name] = prevCart[name];
-                    } else {
-                      isChanged = true;
-                    }
-                  });
-                  
-                  if (isChanged) {
-                    localStorage.setItem('ember_cart_v2', JSON.stringify(newCart));
-                  }
-                  return newCart;
+                // 자동 클렌징: 시트에 없는 상품은 장바구니에서 알아서 삭제
+                setSelectedNames(prev => {
+                    const currentNames = data.map(p => p.name);
+                    return prev.filter(name => currentNames.includes(name));
                 });
 
                 setIsLoading(false);
               } catch (error) {
-                console.error("데이터 불러오기 실패", error);
+                console.error("데이터 로드 실패:", error);
                 setIsLoading(false);
+                // 강제 에러 발생 시 ErrorBoundary가 잡도록 처리
+                throw new Error("네트워크 오류"); 
               }
             };
 
             fetchSheetData();
           }, []);
 
-          // 검색 기능
           useEffect(() => {
             let filtered = allProducts;
             if (searchTerm) {
@@ -195,106 +221,8 @@
             setProducts(filtered);
           }, [searchTerm, allProducts]);
 
-          // 스크롤 감지 함수 (TOP 버튼용)
-          const handleScroll = (e) => {
-            if (e.target.scrollTop > 300) {
-              setShowTopBtn(true);
-            } else {
-              setShowTopBtn(false);
-            }
-          };
-
-          const scrollToTop = () => {
-            if (scrollContainerRef.current) {
-              scrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
-            }
-          };
-
-          const showToast = (message) => {
-              setToastMessage(message);
-              setTimeout(() => setToastMessage(""), 2000);
-          }
-
-          // 장바구니 항목 체크/해제
-          const toggleSelection = (productName) => {
-            setCartItems(prev => {
-              const newCart = { ...prev };
-              if (newCart[productName]) {
-                delete newCart[productName]; 
-              } else {
-                newCart[productName] = 1; 
-              }
-              return newCart;
-            });
-          };
-
-          // 수량 +, - 조절
-          const updateQuantity = (productName, delta, e) => {
-            e.stopPropagation(); // 체크박스 동시 클릭 방지
-            setCartItems(prev => {
-              const newCart = { ...prev };
-              const currentQty = newCart[productName] || 0;
-              const nextQty = currentQty + delta;
-              
-              if (nextQty > 0) {
-                newCart[productName] = nextQty;
-              } else {
-                delete newCart[productName];
-              }
-              return newCart;
-            });
-          };
-
-          // 총 수량 및 총액 계산
-          const selectedKeys = Object.keys(cartItems);
-          const totalItemCount = Object.values(cartItems).reduce((a, b) => a + b, 0);
-
-          const totalPrice = allProducts.reduce((sum, p) => {
-            if (cartItems[p.name]) {
-              const num = parseInt(p.price.replace(/[^0-9]/g, ''), 10);
-              return sum + (isNaN(num) ? 0 : num) * cartItems[p.name];
-            }
-            return sum;
-          }, 0);
-
-          // 다중 복사 기능
-          const handleCopyAll = () => {
-            if (selectedKeys.length === 0) return;
-            
-            let textToCopy = allProducts
-              .filter(p => cartItems[p.name])
-              .map(p => {
-                 const num = parseInt(p.price.replace(/[^0-9]/g, ''), 10);
-                 const priceVal = isNaN(num) ? 0 : num;
-                 const qty = cartItems[p.name];
-                 const formattedPrice = isNaN(num) ? p.price : num.toLocaleString();
-                 
-                 if (qty > 1) {
-                   const itemTotal = priceVal * qty;
-                   return `${p.name} ${formattedPrice} x ${qty}개 = ${itemTotal.toLocaleString()}`;
-                 }
-                 return `${p.name} ${formattedPrice}`;
-              }).join('\n');
-            
-            textToCopy += `\n------------------\n총 상품 금액: ${totalPrice.toLocaleString()}원`;
-
-            const textArea = document.createElement("textarea");
-            textArea.value = textToCopy;
-            textArea.style.position = "fixed";
-            textArea.style.left = "-9999px";
-            document.body.appendChild(textArea);
-            textArea.select();
-            try {
-              document.execCommand('copy');
-              showToast(`총 ${selectedKeys.length}개 상품 복사 완료!`);
-            } catch (err) {}
-            document.body.removeChild(textArea);
-          };
-
-          // [추가] 계좌번호 복사 기능
           const handleCopyAccount = () => {
-            const accountInfo = "카카오뱅크 7942-32-84990 김선정"; 
-            
+            const accountInfo = "카카오뱅크 7942-32-84990 김선정";
             const textArea = document.createElement("textarea");
             textArea.value = accountInfo;
             textArea.style.position = "fixed";
@@ -308,7 +236,6 @@
             document.body.removeChild(textArea);
           };
 
-          // 단일 복사 기능
           const handleCopy = (product, formattedPrice) => {
             const textToCopy = `${product.name} ${formattedPrice}`;
             const textArea = document.createElement("textarea");
@@ -319,16 +246,69 @@
             textArea.select();
             try {
               document.execCommand('copy');
-              showToast(`복사 완료: ${product.name}`);
+              showToast(product.name);
             } catch (err) {}
             document.body.removeChild(textArea);
+          };
+
+          const toggleSelection = (productName) => {
+            setSelectedNames(prev => 
+              prev.includes(productName) 
+                ? prev.filter(name => name !== productName) 
+                : [...prev, productName]
+            );
+          };
+
+          const selectedProducts = allProducts.filter(p => selectedNames.includes(p.name));
+          const totalPrice = selectedProducts.reduce((sum, p) => {
+            const num = parseInt(p.price.replace(/[^0-9]/g, ''), 10);
+            return sum + (isNaN(num) ? 0 : num);
+          }, 0);
+
+          const handleCopyAll = () => {
+            if (selectedProducts.length === 0) return;
+            
+            let textToCopy = selectedProducts.map(p => {
+               const num = parseInt(p.price.replace(/[^0-9]/g, ''), 10);
+               const formattedPrice = isNaN(num) ? p.price : num.toLocaleString();
+               return `${p.name} ${formattedPrice}`;
+            }).join('\n');
+            
+            textToCopy += `\n------------------\n총 상품 금액: ${totalPrice.toLocaleString()}원`;
+
+            const textArea = document.createElement("textarea");
+            textArea.value = textToCopy;
+            textArea.style.position = "fixed";
+            textArea.style.left = "-9999px";
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+              document.execCommand('copy');
+              showToast(`총 ${selectedProducts.length}개 상품 복사 완료!`);
+            } catch (err) {}
+            document.body.removeChild(textArea);
+          };
+
+          const showToast = (message) => {
+              setToastMessage(message);
+              setTimeout(() => setToastMessage(""), 2000);
+          }
+
+          const handleScroll = (e) => {
+            if (e.target.scrollTop > 300) setShowTopBtn(true);
+            else setShowTopBtn(false);
+          };
+
+          const scrollToTop = () => {
+            if (scrollContainerRef.current) {
+              scrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+            }
           };
 
           return (
             <div className="flex justify-center sm:items-center w-full" style={{ height: '100dvh' }}>
               <div className="w-full max-w-md bg-white h-full relative flex flex-col shadow-2xl sm:h-[800px] sm:rounded-none overflow-hidden">
                 
-                {/* 상단 블랙 헤더 (계좌복사 버튼은 하단으로 이동시켰습니다) */}
                 <header className="py-4 text-center bg-black flex-shrink-0 z-20 relative">
                   <h1 className="text-xl font-serif text-white tracking-[0.25em] ml-1 uppercase">EMBER</h1>
                   <p className="text-[9px] text-gray-400 tracking-[0.2em] uppercase mt-0.5">Official Lineup</p>
@@ -336,7 +316,6 @@
 
                 <main className="flex-1 flex flex-col bg-white overflow-hidden">
                   
-                  {/* 검색창 */}
                   <div className="px-5 py-3 border-b border-gray-100 flex-shrink-0">
                     <div className="relative">
                       <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
@@ -352,7 +331,6 @@
                     </div>
                   </div>
 
-                  {/* 안내 멘트 */}
                   <div className="bg-[#f9fafb] px-4 py-3 border-b border-gray-100 flex items-center justify-center gap-1.5 flex-shrink-0 overflow-hidden">
                     <span className="text-[14px] shrink-0">💡</span>
                     <p className="text-[min(12.5px,3.5vw)] text-gray-600 font-medium tracking-tight whitespace-nowrap truncate">
@@ -360,7 +338,6 @@
                     </p>
                   </div>
 
-                  {/* 스크롤 가능한 상품 목록 영역 */}
                   <div 
                     className="flex-1 overflow-y-auto pb-20"
                     ref={scrollContainerRef}
@@ -377,6 +354,7 @@
                           const num = parseInt(onlyNumbers, 10);
                           const formattedPrice = isNaN(num) ? product.price : num.toLocaleString();
                           const isSoldOut = product.status === '품절';
+                          const isChecked = selectedNames.includes(product.name);
 
                           return (
                             <li 
@@ -384,14 +362,12 @@
                               className={`flex items-center justify-between py-4 px-5 transition-colors group ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}
                             >
                               <div className="flex items-center gap-3 pr-4">
-                                
-                                {/* 시크한 체크박스 */}
                                 <div 
                                   className="shrink-0 flex items-center justify-center cursor-pointer py-2 pr-1"
                                   onClick={() => toggleSelection(product.name)}
                                 >
-                                  <div className={`w-5 h-5 border flex items-center justify-center transition-colors ${cartItems[product.name] ? 'bg-black border-black' : 'bg-white border-gray-300'}`}>
-                                    {cartItems[product.name] && (
+                                  <div className={`w-5 h-5 border flex items-center justify-center transition-colors ${isChecked ? 'bg-black border-black' : 'bg-white border-gray-300'}`}>
+                                    {isChecked && (
                                       <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 text-white" viewBox="0 0 20 20" fill="currentColor">
                                         <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                                       </svg>
@@ -399,7 +375,6 @@
                                   </div>
                                 </div>
 
-                                {/* 썸네일 */}
                                 {product.imageUrl && (
                                   <div 
                                     className="w-10 h-10 shrink-0 cursor-pointer overflow-hidden rounded-sm border border-gray-200 shadow-sm"
@@ -420,27 +395,6 @@
                                       </span>
                                     )}
                                   </div>
-
-                                  {/* 수량 조절 컨트롤러 (체크박스를 선택했을 때만 마법처럼 나타납니다!) */}
-                                  {cartItems[product.name] && (
-                                    <div className="flex items-center mt-1 w-20 border border-gray-300 overflow-hidden bg-white h-6 rounded-sm animate-fade-in">
-                                      <button 
-                                        onClick={(e) => updateQuantity(product.name, -1, e)}
-                                        className="w-7 h-full text-gray-500 flex items-center justify-center hover:bg-gray-100 text-lg font-light leading-none active:bg-gray-200"
-                                      >
-                                        -
-                                      </button>
-                                      <div className="flex-1 h-full flex items-center justify-center text-[11px] font-bold border-l border-r border-gray-300 text-black bg-[#fafafa]">
-                                        {cartItems[product.name]}
-                                      </div>
-                                      <button 
-                                        onClick={(e) => updateQuantity(product.name, 1, e)}
-                                        className="w-7 h-full text-gray-500 flex items-center justify-center hover:bg-gray-100 text-lg font-light leading-none active:bg-gray-200"
-                                      >
-                                        +
-                                      </button>
-                                    </div>
-                                  )}
                                 </div>
                               </div>
                               
@@ -466,19 +420,18 @@
                     )}
                   </div>
                   
-                  {/* 푸터 */}
-                  <footer className={`py-8 text-center text-gray-400 text-[10px] border-t border-gray-100 bg-white uppercase tracking-widest mt-auto ${selectedKeys.length > 0 ? 'pb-28' : ''}`}>
+                  <footer className={`py-8 text-center text-gray-400 text-[10px] border-t border-gray-100 bg-white uppercase tracking-widest mt-auto ${selectedNames.length > 0 ? 'pb-28' : ''}`}>
                       <p className="mb-1">Ember Sister Official</p>
                       <p>System by. 깔로</p>
                   </footer>
                 </main>
 
-                {/* 다중 선택 하단 결제 바 (초기화 버튼 옆에 계좌복사 추가) */}
-                {selectedKeys.length > 0 && (
+                {}
+                {selectedNames.length > 0 && (
                   <div className="absolute bottom-0 left-0 right-0 bg-black text-white px-3 sm:px-5 py-4 flex items-center justify-between z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.15)] animate-fade-in">
                     <div className="flex flex-col shrink-0 pr-2">
                       <div className="text-[9px] text-gray-400 tracking-wider mb-0.5">
-                        {totalItemCount}개 선택됨
+                        {selectedNames.length}개 선택됨
                       </div>
                       <div className="text-[15px] sm:text-lg font-bold font-serif tracking-widest">
                         {totalPrice.toLocaleString()}
@@ -492,7 +445,7 @@
                         계좌복사
                       </button>
                       <button 
-                        onClick={() => setCartItems({})}
+                        onClick={() => setSelectedNames([])}
                         className="px-2 sm:px-3 py-2 border border-gray-600 text-gray-300 text-[10px] font-bold tracking-wider hover:bg-gray-800 transition-colors"
                       >
                         초기화
@@ -507,11 +460,10 @@
                   </div>
                 )}
 
-                {/* TOP 버튼 */}
                 {showTopBtn && (
                   <button
                     onClick={scrollToTop}
-                    className={`absolute right-6 w-11 h-11 bg-black text-white rounded-full shadow-[0_4px_14px_0_rgba(0,0,0,0.39)] flex items-center justify-center animate-fade-in z-30 hover:scale-105 transition-transform ${selectedKeys.length > 0 ? 'bottom-24' : 'bottom-10'}`}
+                    className={`absolute right-6 w-11 h-11 bg-black text-white rounded-full shadow-[0_4px_14px_0_rgba(0,0,0,0.39)] flex items-center justify-center animate-fade-in z-30 hover:scale-105 transition-transform ${selectedNames.length > 0 ? 'bottom-24' : 'bottom-10'}`}
                     aria-label="맨 위로 가기"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -520,14 +472,12 @@
                   </button>
                 )}
 
-                {/* 알림 토스트 */}
                 {toastMessage && (
                   <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-black text-white px-6 py-4 text-[13px] font-bold tracking-widest shadow-2xl z-50 whitespace-nowrap animate-fade-in border border-white/20 rounded-md">
                     {toastMessage}
                   </div>
                 )}
                 
-                {/* 사진 팝업 모달 */}
                 {selectedImage && (
                   <div 
                     className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-80 p-5 animate-fade-in"
@@ -555,8 +505,13 @@
           );
         }
 
+        // 앱 렌더링 시 ErrorBoundary로 감싸서 실행
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        root.render(
+            <ErrorBoundary>
+                <App />
+            </ErrorBoundary>
+        );
     </script>
 </body>
 </html>
