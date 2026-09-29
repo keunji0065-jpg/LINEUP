@@ -92,8 +92,8 @@
         const getSafeKey = (name) => name.replace(/[.#$\[\]]/g, '_');
 
         class ErrorBoundary extends React.Component {
-            constructor(props) { super(props); this.state = { hasError: false }; }
-            static getDerivedStateFromError(error) { return { hasError: true }; }
+            constructor(props) { super(props); this.state = { hasError: false, errorMessage: '' }; }
+            static getDerivedStateFromError(error) { return { hasError: true, errorMessage: error.toString() }; }
             componentDidCatch(error, errorInfo) { console.error("오류 발생:", error, errorInfo); }
             render() {
                 if (this.state.hasError) {
@@ -101,7 +101,8 @@
                         <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 text-center px-5 w-full max-w-md mx-auto">
                             <div className="text-4xl mb-4">⚠️</div>
                             <h2 className="text-lg font-bold mb-2">일시적인 오류가 발생했습니다.</h2>
-                            <button onClick={() => window.location.reload()} className="px-6 py-3 bg-black text-white text-sm font-bold tracking-widest uppercase rounded">새로고침 하기</button>
+                            <p className="text-xs text-red-500 mb-6 px-4 break-all">{this.state.errorMessage}</p>
+                            <button onClick={() => { localStorage.removeItem('ember_cart_v2'); window.location.reload(); }} className="px-6 py-3 bg-black text-white text-sm font-bold tracking-widest uppercase rounded">새로고침 및 캐시 초기화</button>
                         </div>
                     );
                 }
@@ -250,9 +251,13 @@
           const adminClickCount = useRef(0);
           const adminTimer = useRef(null);
 
-          // 옵션(개별) 선택 상태 보관함 (originalName 저장)
+          // 옵션(개별) 선택 상태 보관함 (originalName 저장) - 🚨 모바일 캐시 충돌 방지 로직 강화
           const [selectedOptions, setSelectedOptions] = useState(() => {
-            try { const saved = localStorage.getItem('ember_cart_v2'); return saved ? JSON.parse(saved) : []; } 
+            try { 
+                const saved = localStorage.getItem('ember_cart_v2'); 
+                const parsed = saved ? JSON.parse(saved) : []; 
+                return Array.isArray(parsed) ? parsed : []; 
+            } 
             catch (e) { return []; }
           });
 
@@ -334,9 +339,9 @@
                 
                 setGroupedProducts(groupArray);
                 
-                // 시트에서 사라진 옵션은 장바구니에서도 제거
+                // 시트에서 사라진 옵션은 장바구니에서도 제거 - 🚨 모바일 에러 방어
                 const allValidOptions = groupArray.flatMap(g => g.options.map(o => o.originalName));
-                setSelectedOptions(prev => prev.filter(name => allValidOptions.includes(name)));
+                setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(name => allValidOptions.includes(name)));
                 setIsLoading(false);
               } catch (error) {
                 console.error("데이터 로드 실패:", error);
