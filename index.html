@@ -12,7 +12,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js" crossorigin="anonymous"></script>
     
-    <!-- 🚨 Firebase SDK 추가 (호환 모드) -->
+    <!-- Firebase SDK (호환 모드) -->
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 
@@ -67,7 +67,7 @@
         </div>
     </div>
 
-    <!-- 🚨 FIREBASE 설정 영역 (실제 키 적용 완료) -->
+    <!-- FIREBASE 설정 영역 (실제 키 적용 완료) -->
     <script>
         const firebaseConfig = {
             apiKey: "AIzaSyDgdH34cDnp2S9akHfFLYBSpHzzamHFuoc",
@@ -252,7 +252,7 @@
           const adminClickCount = useRef(0);
           const adminTimer = useRef(null);
 
-          // 옵션(개별) 선택 상태 보관함 (originalName 저장) - 🚨 모바일 캐시 충돌 방지 로직 강화
+          // 옵션(개별) 선택 상태 보관함 (originalName 저장)
           const [selectedOptions, setSelectedOptions] = useState(() => {
             try { 
                 const saved = localStorage.getItem('ember_cart_v2'); 
@@ -264,7 +264,7 @@
 
           useEffect(() => { localStorage.setItem('ember_cart_v2', JSON.stringify(selectedOptions)); }, [selectedOptions]);
 
-          // 구글 시트 데이터 로드 및 그룹화 알고리즘
+          // 구글 시트 데이터 로드 및 동적 스마트 그룹화 알고리즘
           useEffect(() => {
             const fetchSheetData = async () => {
               setIsLoading(true);
@@ -276,7 +276,7 @@
                 
                 const validRows = [];
                 
-                rows.forEach((row, index) => {
+                rows.forEach((row) => {
                   const cleanRow = row.trim();
                   if (!cleanRow) return;
                   const cols = []; let current = ''; let inQuotes = false;
@@ -294,7 +294,6 @@
                       const numOnly = rawPrice.replace(/[^0-9-]/g, '');
                       const priceNum = parseInt(numOnly, 10);
                       
-                      // - 나 0원 이하는 제외
                       if (rawPrice !== '-' && !(priceNum <= 0)) {
                           validRows.push({
                               originalName: String(cols[0]).trim(),
@@ -307,14 +306,11 @@
                   }
                 });
 
-                // 2. 스마트 자동 그룹화 (글자 길이에 상관없이 공통 단어 자동 추출)
+                // 스마트 자동 그룹화 (동적 단어 매칭)
                 const groupMap = {};
                 validRows.forEach(row => {
-                    const parts = row.originalName.split(/\s+/);
                     const numMatch = row.originalName.match(/^(\d+)/);
-                    // 상품번호(예: 01, 02)가 있으면 그걸로 묶고, 번호가 없으면 첫 번째 단어(예: 치마)로 묶음
-                    const groupKey = numMatch ? numMatch[1] : parts[0];
-                    
+                    const groupKey = numMatch ? numMatch[1] : row.originalName.split(/\s+/)[0];
                     if (!groupMap[groupKey]) groupMap[groupKey] = [];
                     groupMap[groupKey].push(row);
                 });
@@ -339,12 +335,10 @@
                         continue;
                     }
 
-                    // 이름들을 띄어쓰기 기준으로 쪼개서 비교
                     const splitItems = items.map(item => item.originalName.split(/\s+/));
                     const minLen = Math.min(...splitItems.map(arr => arr.length));
                     let commonWordCount = 0;
 
-                    // 공통으로 완벽하게 일치하는 단어의 개수 찾기 (예: "02" "꺌로" "바지" 까지 3개가 일치)
                     for (let i = 0; i < minLen; i++) {
                         const word = splitItems[0][i];
                         const allMatch = splitItems.every(arr => arr[i] === word);
@@ -355,14 +349,12 @@
                         }
                     }
 
-                    if (commonWordCount === 0) commonWordCount = 1; // 최소 1단어는 이름으로 사용
+                    if (commonWordCount === 0) commonWordCount = 1;
 
-                    // 공통 단어들만 뽑아서 대표 상품명 생성 (예: "02 꺌로 바지")
                     const baseName = splitItems[0].slice(0, commonWordCount).join(' ');
                     const safeKey = getSafeKey(baseName);
 
                     const options = items.map((item, idx) => {
-                        // 공통 단어 이후의 나머지 문자열을 옵션명으로 깔끔하게 자름 (예: "분홍 XS")
                         const optName = splitItems[idx].slice(commonWordCount).join(' ') || '단일옵션';
                         return {
                             originalName: item.originalName,
@@ -375,13 +367,12 @@
                     finalGroups.push({
                         id: safeKey,
                         name: baseName,
-                        formattedPrice: items[0].formattedPrice, // 묶음 대표 가격
+                        formattedPrice: items[0].formattedPrice,
                         numericPrice: items[0].numericPrice,
                         options: options
                     });
                 }
 
-                // 3. 번호 순서대로 정렬 (오름차순 01, 02, 03...)
                 const groupArray = finalGroups.sort((a, b) => {
                   const numA = a.name.match(/^(\d+)/) ? parseInt(a.name.match(/^(\d+)/)[0]) : 9999;
                   const numB = b.name.match(/^(\d+)/) ? parseInt(b.name.match(/^(\d+)/)[0]) : 9999;
@@ -391,7 +382,6 @@
                 
                 setGroupedProducts(groupArray);
                 
-                // 시트에서 사라진 옵션은 장바구니에서도 제거 - 🚨 모바일 에러 방어
                 const allValidOptions = groupArray.flatMap(g => g.options.map(o => o.originalName));
                 setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(name => allValidOptions.includes(name)));
                 setIsLoading(false);
@@ -410,9 +400,9 @@
                   if (snap.val()) setFirebaseData(snap.val());
                   else setFirebaseData({});
               });
+              return () => ref.off();
           }, []);
 
-          // 원본 데이터 + 파이어베이스 부가정보 융합
           const displayProducts = groupedProducts.map(group => {
               const override = firebaseData[group.id] || {};
               return {
@@ -422,7 +412,7 @@
               };
           }).filter(g => g.name.toLowerCase().includes(searchTerm.toLowerCase()) || g.options.some(o => o.originalName.toLowerCase().includes(searchTerm.toLowerCase())));
 
-          // --- 관리자 제어 ---
+          // --- 관리자 제어 (자물쇠 트리플 클릭) ---
           const handleAdminClick = () => {
               if (isAdmin) { setIsAdmin(false); setActiveTab('catalog'); return; }
               adminClickCount.current++;
@@ -453,7 +443,6 @@
                 .then(() => { showToast("비고가 등록되었습니다."); setNoteTarget(null); });
           };
 
-          // --- 칩 선택 및 복사 유틸 ---
           const toggleOptionSelection = (originalName) => {
             setSelectedOptions(prev => prev.includes(originalName) ? prev.filter(n => n !== originalName) : [...prev, originalName]);
           };
@@ -465,18 +454,15 @@
             let total = 0;
             let orderLines = [];
 
-            // 순서대로 복사하기 위해 전체 목록 참조
             groupedProducts.forEach(group => {
                 group.options.forEach(opt => {
                     if (selectedOptions.includes(opt.originalName)) {
                         total += opt.numericPrice;
-                        // 불필요한 기호(•)를 없애고 깔끔하게 상품명과 가격만 추가
                         orderLines.push(`${opt.originalName} - ${opt.numericPrice.toLocaleString()}원`);
                     }
                 });
             });
 
-            // 라이브 커머스 주문서 등의 꾸밈 요소 모두 제거
             const textToCopy = `${orderLines.join('\n')}\n총 상품 합계: ${total.toLocaleString()}원`;
 
             const textArea = document.createElement("textarea");
@@ -497,7 +483,7 @@
           return (
             <div className="w-full h-full max-w-md bg-white shadow-2xl relative overflow-hidden flex flex-col">
                 
-                {/* 초슬림 상단 헤더 */}
+                {/* 상단 헤더 (엠버 정중앙 & 자물쇠 우측 끝) */}
                 <header className="py-2.5 bg-black flex-shrink-0 z-20 relative flex items-center justify-center">
                   <h1 className="text-lg font-serif text-white tracking-[0.2em] uppercase">EMBER</h1>
                   <button onClick={handleAdminClick} className="absolute right-3 p-2 text-gray-700 hover:text-gray-400" title="관리자">
@@ -556,7 +542,7 @@
                                     {/* 비고란 */}
                                     {group.note && <p className="text-[11px] text-blue-600 font-medium mt-1 truncate">{group.note}</p>}
                                     
-                                    {/* 옵션 칩 */}
+                                    {/* 옵션 칩 (품절 시 빨간색 취소선) */}
                                     <div className="mt-2.5 flex flex-wrap gap-1.5">
                                         {group.options.map(opt => {
                                             const isSelected = selectedOptions.includes(opt.originalName);
@@ -592,11 +578,10 @@
                           <p>System by. 깔로</p>
                       </div>
                   )}
-                  {/* 플로팅 바 공간 확보용 여백 */}
                   {selectedOptions.length > 0 && <div className="h-20"></div>} 
                 </main>
 
-                {/* 슬림화된 플로팅 장바구니 바 */}
+                {/* 플로팅 장바구니 바 */}
                 {selectedOptions.length > 0 && activeTab === 'catalog' && (
                   <div className="absolute bottom-0 left-0 right-0 bg-black text-white px-4 py-3 flex items-center justify-between z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.15)] animate-fade-in">
                     <div className="flex flex-col shrink-0 pr-2">
