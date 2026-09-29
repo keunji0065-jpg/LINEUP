@@ -239,6 +239,7 @@
           const [toastMessage, setToastMessage] = useState("");
           const [isLoading, setIsLoading] = useState(true);
           const [selectedImage, setSelectedImage] = useState(null);
+          const [refreshKey, setRefreshKey] = useState(0);
           
           // 관리자 상태
           const [isAdmin, setIsAdmin] = useState(false);
@@ -273,7 +274,7 @@
                 const text = await response.text();
                 const rows = text.replace(/\r/g, '').split('\n');
                 
-                const groups = {};
+                const validRows = [];
                 
                 rows.forEach((row, index) => {
                   const cleanRow = row.trim();
@@ -295,42 +296,93 @@
                       
                       // - 나 0원 이하는 제외
                       if (rawPrice !== '-' && !(priceNum <= 0)) {
-                          const fullName = String(cols[0]).trim();
-                          const parts = fullName.split(/\s+/);
-                          
-                          // 앞의 두 덩어리를 공통 그룹 이름으로 묶음 (예: "01 치마")
-                          let baseName = fullName;
-                          let optName = '단일옵션';
-                          if (parts.length >= 2) {
-                              baseName = parts.slice(0, 2).join(' ');
-                              optName = parts.slice(2).join(' ') || '단일옵션';
-                          }
-
-                          const safeKey = getSafeKey(baseName);
-                          
-                          if (!groups[safeKey]) {
-                              groups[safeKey] = {
-                                  id: safeKey,
-                                  name: baseName,
-                                  formattedPrice: isNaN(priceNum) ? rawPrice : priceNum.toLocaleString(),
-                                  numericPrice: isNaN(priceNum) ? 0 : priceNum,
-                                  options: []
-                              };
-                          }
-                          
-                          groups[safeKey].options.push({
-                              originalName: fullName, // 예: "01 치마 빨강 55"
-                              displayName: optName,   // 예: "빨강 55"
+                          validRows.push({
+                              originalName: String(cols[0]).trim(),
                               isSoldOut: cols[2] ? String(cols[2]).trim() === '품절' : false,
-                              numericPrice: isNaN(priceNum) ? 0 : priceNum
+                              numericPrice: isNaN(priceNum) ? 0 : priceNum,
+                              formattedPrice: isNaN(priceNum) ? rawPrice : priceNum.toLocaleString()
                           });
                       }
                     }
                   }
                 });
 
-                // 번호 순서대로 정렬 (오름차순 01, 02, 03...)
-                const groupArray = Object.values(groups).sort((a, b) => {
+                // 2. 스마트 자동 그룹화 (글자 길이에 상관없이 공통 단어 자동 추출)
+                const groupMap = {};
+                validRows.forEach(row => {
+                    const parts = row.originalName.split(/\s+/);
+                    const numMatch = row.originalName.match(/^(\d+)/);
+                    // 상품번호(예: 01, 02)가 있으면 그걸로 묶고, 번호가 없으면 첫 번째 단어(예: 치마)로 묶음
+                    const groupKey = numMatch ? numMatch[1] : parts[0];
+                    
+                    if (!groupMap[groupKey]) groupMap[groupKey] = [];
+                    groupMap[groupKey].push(row);
+                });
+
+                const finalGroups = [];
+                for (const key in groupMap) {
+                    const items = groupMap[key];
+                    
+                    if (items.length === 1) {
+                        finalGroups.push({
+                            id: getSafeKey(items[0].originalName),
+                            name: items[0].originalName,
+                            formattedPrice: items[0].formattedPrice,
+                            numericPrice: items[0].numericPrice,
+                            options: [{
+                                originalName: items[0].originalName,
+                                displayName: '단일옵션',
+                                isSoldOut: items[0].isSoldOut,
+                                numericPrice: items[0].numericPrice
+                            }]
+                        });
+                        continue;
+                    }
+
+                    // 이름들을 띄어쓰기 기준으로 쪼개서 비교
+                    const splitItems = items.map(item => item.originalName.split(/\s+/));
+                    const minLen = Math.min(...splitItems.map(arr => arr.length));
+                    let commonWordCount = 0;
+
+                    // 공통으로 완벽하게 일치하는 단어의 개수 찾기 (예: "02" "꺌로" "바지" 까지 3개가 일치)
+                    for (let i = 0; i < minLen; i++) {
+                        const word = splitItems[0][i];
+                        const allMatch = splitItems.every(arr => arr[i] === word);
+                        if (allMatch) {
+                            commonWordCount++;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if (commonWordCount === 0) commonWordCount = 1; // 최소 1단어는 이름으로 사용
+
+                    // 공통 단어들만 뽑아서 대표 상품명 생성 (예: "02 꺌로 바지")
+                    const baseName = splitItems[0].slice(0, commonWordCount).join(' ');
+                    const safeKey = getSafeKey(baseName);
+
+                    const options = items.map((item, idx) => {
+                        // 공통 단어 이후의 나머지 문자열을 옵션명으로 깔끔하게 자름 (예: "분홍 XS")
+                        const optName = splitItems[idx].slice(commonWordCount).join(' ') || '단일옵션';
+                        return {
+                            originalName: item.originalName,
+                            displayName: optName,
+                            isSoldOut: item.isSoldOut,
+                            numericPrice: item.numericPrice
+                        };
+                    });
+
+                    finalGroups.push({
+                        id: safeKey,
+                        name: baseName,
+                        formattedPrice: items[0].formattedPrice, // 묶음 대표 가격
+                        numericPrice: items[0].numericPrice,
+                        options: options
+                    });
+                }
+
+                // 3. 번호 순서대로 정렬 (오름차순 01, 02, 03...)
+                const groupArray = finalGroups.sort((a, b) => {
                   const numA = a.name.match(/^(\d+)/) ? parseInt(a.name.match(/^(\d+)/)[0]) : 9999;
                   const numB = b.name.match(/^(\d+)/) ? parseInt(b.name.match(/^(\d+)/)[0]) : 9999;
                   if (numA === 9999 && numB === 9999) return a.name.localeCompare(b.name);
@@ -349,7 +401,7 @@
               }
             };
             fetchSheetData();
-          }, []);
+          }, [refreshKey]);
 
           // Firebase 데이터 실시간 수신 (사진, 비고)
           useEffect(() => {
@@ -465,11 +517,15 @@
                 <main className="flex-1 overflow-y-auto bg-slate-50 relative">
                   
                   {activeTab === 'catalog' && (
-                      <div className="sticky top-0 z-10 bg-white border-b border-slate-200 px-4 py-2.5 shadow-sm">
-                        <div className="relative">
+                      <div className="sticky top-0 z-10 bg-white border-b border-slate-200 px-4 py-2.5 shadow-sm flex items-center gap-2">
+                        <div className="relative flex-1">
                             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><SearchIcon className="text-slate-400" /></div>
                             <input type="text" placeholder="상품명 또는 번호 검색" className="w-full pl-9 pr-4 py-1.5 bg-slate-100 border border-transparent rounded-md text-sm outline-none focus:bg-white focus:border-slate-300 transition-colors" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                         </div>
+                        <button onClick={() => setRefreshKey(prev => prev + 1)} className="shrink-0 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-black rounded-md text-[11px] font-bold flex items-center gap-1 transition-colors border border-transparent active:border-slate-300">
+                            <svg className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                            새로고침
+                        </button>
                       </div>
                   )}
 
