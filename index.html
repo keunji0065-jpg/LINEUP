@@ -2,15 +2,16 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
+    <!-- 화면 확대(줌) 허용하도록 maximum-scale 및 user-scalable 제한 해제 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>엠버언니 라이브 방송 제품</title>
     <!-- 디자인(Tailwind CSS) -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React & Babel -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin="anonymous"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js" crossorigin="anonymous"></script>
+    <!-- React & Babel (crossorigin 속성 제거로 로드 차단 에러 해결) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
     
     <!-- Firebase SDK (호환 모드) -->
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -56,10 +57,6 @@
             width: 100%;
             height: 100%;
         }
-
-        /* 옵션 내부 스크롤 시 스크롤바 숨김 처리 */
-        .hide-scrollbar::-webkit-scrollbar { display: none; }
-        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body class="antialiased h-[100dvh] flex flex-col items-center justify-center">
@@ -71,7 +68,7 @@
         </div>
     </div>
 
-    <!-- FIREBASE 설정 영역 (실제 키 적용 완료) -->
+    <!-- FIREBASE 설정 영역 -->
     <script>
         const firebaseConfig = {
             apiKey: "AIzaSyDgdH34cDnp2S9akHfFLYBSpHzzamHFuoc",
@@ -118,19 +115,12 @@
             <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
         );
 
-        const GridIcon = ({ size = 16 }) => (
-            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
-        );
-
-        const ListIcon = ({ size = 16 }) => (
-            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
-        );
-
         // ==========================================
-        // 1:1 사진 등록 (크롭퍼) 모달
+        // 1:1 사진 등록 (크롭퍼) 모달 - 드래그앤드롭/클릭 파일업로드 지원 + 1080px 고화질 저장
         // ==========================================
         const CropperModal = ({ product, onClose, onSave }) => {
             const canvasRef = useRef(null);
+            const fileInputRef = useRef(null);
             const [imageObj, setImageObj] = useState(null);
             const [scale, setScale] = useState(1);
             
@@ -138,30 +128,45 @@
             const isDragging = useRef(false);
             const dragStart = useRef({ x: 0, y: 0 });
 
+            const loadImageToCanvas = (src) => {
+                const img = new Image();
+                img.onload = () => {
+                    setImageObj(img);
+                    const cSize = 400;
+                    const aspect = img.width / img.height;
+                    let initialScale = aspect > 1 ? cSize / img.height : cSize / img.width;
+                    setScale(initialScale);
+                    pan.current = { x: (cSize - img.width * initialScale) / 2, y: (cSize - img.height * initialScale) / 2 };
+                    draw();
+                };
+                img.src = src;
+            };
+
+            const handleFileChange = (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => loadImageToCanvas(evt.target.result);
+                reader.readAsDataURL(file);
+            };
+
             useEffect(() => {
                 const handlePaste = (e) => {
                     const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+                    let pasted = false;
                     for (const item of items) {
                         if (item.type.indexOf('image') !== -1) {
                             const blob = item.getAsFile();
                             const reader = new FileReader();
-                            reader.onload = (evt) => {
-                                const img = new Image();
-                                img.onload = () => {
-                                    setImageObj(img);
-                                    const cSize = 400;
-                                    const aspect = img.width / img.height;
-                                    let initialScale = aspect > 1 ? cSize / img.height : cSize / img.width;
-                                    setScale(initialScale);
-                                    pan.current = { x: (cSize - img.width * initialScale) / 2, y: (cSize - img.height * initialScale) / 2 };
-                                    draw();
-                                };
-                                img.src = evt.target.result;
-                            };
+                            reader.onload = (evt) => loadImageToCanvas(evt.target.result);
                             reader.readAsDataURL(blob);
                             e.preventDefault();
+                            pasted = true;
                             break;
                         }
+                    }
+                    if (!pasted && items.length > 0 && items[0].type === 'text/plain') {
+                        alert("사진 파일이 아닌 텍스트가 클립보드에 있습니다.\n엑셀에서 사진 복사가 안될 경우, 화면 캡처(Win+Shift+S)를 사용하시거나 파일로 직접 업로드해주세요!");
                     }
                 };
                 window.addEventListener('paste', handlePaste);
@@ -188,21 +193,27 @@
                 setScale(prev => Math.min(Math.max(prev * zoomFactor, 0.2), 5));
             };
 
+            const handleDrop = (e) => {
+                e.preventDefault();
+                const file = e.dataTransfer.files?.[0];
+                if (file && file.type.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.onload = (evt) => loadImageToCanvas(evt.target.result);
+                    reader.readAsDataURL(file);
+                }
+            };
+            const handleDragOver = (e) => e.preventDefault();
+
             const handleSave = () => {
-                if (!imageObj) return alert('이미지를 먼저 붙여넣어주세요.');
+                if (!imageObj) return alert('이미지를 먼저 업로드하거나 붙여넣어주세요.');
                 const exportCanvas = document.createElement('canvas');
-                
-                // [수정] 최고 해상도(1080x1080) 적용
-                const targetSize = 1080;
-                exportCanvas.width = targetSize; 
-                exportCanvas.height = targetSize;
+                // 해상도를 1080x1080 (고화질)로 대폭 상향
+                exportCanvas.width = 1080; exportCanvas.height = 1080;
                 const ctx = exportCanvas.getContext('2d');
-                const ratio = targetSize / 400; 
-                
+                const ratio = 1080 / 400; 
                 ctx.drawImage(imageObj, pan.current.x * ratio, pan.current.y * ratio, imageObj.width * scale * ratio, imageObj.height * scale * ratio);
-                
-                // [수정] 화질 1.0 (무손실에 가까운 최고화질 JPEG)
-                onSave(product.id, exportCanvas.toDataURL('image/jpeg', 1.0));
+                // 화질 95% 유지
+                onSave(product.id, exportCanvas.toDataURL('image/jpeg', 0.95));
             };
 
             return (
@@ -212,39 +223,26 @@
                             <h3 className="font-bold text-base">사진 등록: {product.name}</h3>
                             <button onClick={onClose} className="text-2xl text-slate-400 hover:text-black">&times;</button>
                         </div>
-                        <div className="text-[11px] text-slate-500 mb-2">화면 캡처 후 <b>Ctrl+V</b>를 누르세요. (마우스 드래그/휠 가능)</div>
-                        <div className="crop-canvas-container" onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} onWheel={handleWheel}>
+                        <div className="text-[11px] text-slate-500 mb-2">캡처 후 <b>Ctrl+V</b> 붙여넣기, 또는 박스를 클릭해 사진 선택</div>
+                        
+                        <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*" className="hidden" />
+                        
+                        <div className="crop-canvas-container" 
+                            onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} onWheel={handleWheel}
+                            onDrop={handleDrop} onDragOver={handleDragOver}
+                            onClick={() => !imageObj && fileInputRef.current?.click()}
+                        >
                             <canvas ref={canvasRef} width={400} height={400}></canvas>
                             {!imageObj && (
-                                <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 pointer-events-none">
-                                    <div className="text-3xl mb-1">📸</div>
-                                    <p className="text-xs font-bold">Ctrl + V 로 붙여넣기</p>
+                                <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 hover:bg-slate-800 transition-colors pointer-events-none">
+                                    <div className="text-3xl mb-2">📸</div>
+                                    <p className="text-xs font-bold text-center">클릭하여 사진 파일 찾기<br/>또는 캡처본(Ctrl+V) 붙여넣기</p>
                                 </div>
                             )}
                         </div>
-                        <button onClick={handleSave} className="mt-4 w-full py-2.5 bg-black text-white font-bold tracking-widest text-sm rounded-lg hover:bg-slate-800 transition">
+                        <button onClick={handleSave} className="mt-4 w-full py-3 bg-black text-white font-bold tracking-widest text-sm rounded-lg hover:bg-slate-800 transition shadow-md">
                             이 구획으로 사진 저장
                         </button>
-                    </div>
-                </div>
-            );
-        };
-
-        // ==========================================
-        // 비고(상세정보) 입력 모달
-        // ==========================================
-        const NoteModal = ({ product, currentNote, onClose, onSave }) => {
-            const [note, setNote] = useState(currentNote || "");
-            return (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-fade-in">
-                    <div className="bg-white max-w-sm w-full p-5 shadow-2xl rounded-xl flex flex-col">
-                        <h3 className="font-bold text-base mb-2">비고 입력: {product.name}</h3>
-                        <p className="text-[11px] text-slate-500 mb-3">고객에게 표시될 상세 스펙(핏, 기장 등)을 입력하세요.<br/>※ 복사되는 주문서에는 포함되지 않습니다.</p>
-                        <input type="text" autoFocus value={note} onChange={e => setNote(e.target.value)} placeholder="예: 오버핏, 총장 72cm" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm mb-4 outline-none focus:border-black" />
-                        <div className="flex gap-2">
-                            <button onClick={onClose} className="flex-1 py-2 bg-slate-100 text-slate-600 font-bold rounded-lg text-sm">취소</button>
-                            <button onClick={() => onSave(product.id, note)} className="flex-1 py-2 bg-black text-white font-bold rounded-lg text-sm">저장</button>
-                        </div>
                     </div>
                 </div>
             );
@@ -265,13 +263,12 @@
           const [showAuthModal, setShowAuthModal] = useState(false);
           const [authInput, setAuthInput] = useState("");
           const [cropTarget, setCropTarget] = useState(null); 
-          const [noteTarget, setNoteTarget] = useState(null);
           const [activeTab, setActiveTab] = useState('catalog');
           
           const adminClickCount = useRef(0);
           const adminTimer = useRef(null);
 
-          // 옵션(개별) 선택 상태 보관함 (originalName 저장)
+          // 옵션(개별) 선택 상태 보관함
           const [selectedOptions, setSelectedOptions] = useState(() => {
             try { 
                 const saved = localStorage.getItem('ember_cart_v3'); 
@@ -288,8 +285,12 @@
             const fetchSheetData = async () => {
               setIsLoading(true);
               try {
-                const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRI6cW1MyLv5gbcfsjEyYuMDWdL6jDit_Fuz2ZNXPKwEJZeedXoNorHHhUdsoDnDxBzzrFu6P72WVOy/pub?gid=1797935796&single=true&output=csv";
-                const response = await fetch(csvUrl);
+                // 1. 강제 캐시 우회(Cache-Busting)를 위한 타임스탬프 추가
+                const timestamp = new Date().getTime();
+                const csvUrl = `https://docs.google.com/spreadsheets/d/e/2PACX-1vRI6cW1MyLv5gbcfsjEyYuMDWdL6jDit_Fuz2ZNXPKwEJZeedXoNorHHhUdsoDnDxBzzrFu6P72WVOy/pub?gid=1797935796&single=true&output=csv&t=${timestamp}`;
+                
+                // 2. 브라우저 캐시도 완벽히 무시하도록 강력한 옵션(cache: 'no-store') 추가
+                const response = await fetch(csvUrl, { cache: 'no-store' });
                 const text = await response.text();
                 const rows = text.replace(/\r/g, '').split('\n');
                 
@@ -325,7 +326,7 @@
                   }
                 });
 
-                // 스마트 자동 그룹화 (동적 단어 매칭)
+                // 스마트 자동 그룹화
                 const groupMap = {};
                 validRows.forEach(row => {
                     const numMatch = row.originalName.match(/^(\d+)/);
@@ -346,7 +347,7 @@
                             numericPrice: items[0].numericPrice,
                             options: [{
                                 originalName: items[0].originalName,
-                                displayName: '단일옵션',
+                                displayName: '기본(단품)',
                                 isSoldOut: items[0].isSoldOut,
                                 numericPrice: items[0].numericPrice
                             }]
@@ -374,7 +375,7 @@
                     const safeKey = getSafeKey(baseName);
 
                     const options = items.map((item, idx) => {
-                        const optName = splitItems[idx].slice(commonWordCount).join(' ') || '단일옵션';
+                        const optName = splitItems[idx].slice(commonWordCount).join(' ') || '기본(단품)';
                         return {
                             originalName: item.originalName,
                             displayName: optName,
@@ -431,7 +432,7 @@
               };
           }).filter(g => g.name.toLowerCase().includes(searchTerm.toLowerCase()) || g.options.some(o => o.originalName.toLowerCase().includes(searchTerm.toLowerCase())));
 
-          // --- 관리자 제어 (자물쇠 트리플 클릭) ---
+          // --- 관리자 제어 ---
           const handleAdminClick = () => {
               if (isAdmin) { setIsAdmin(false); setActiveTab('catalog'); return; }
               adminClickCount.current++;
@@ -457,9 +458,9 @@
                 .then(() => { showToast("사진이 등록되었습니다."); setCropTarget(null); });
           };
 
+          // 비고란 인라인 저장 처리
           const handleSaveNote = (groupId, noteText) => {
-              db.ref(`ember_live_data/${groupId}/note`).set(noteText)
-                .then(() => { showToast("비고가 등록되었습니다."); setNoteTarget(null); });
+              db.ref(`ember_live_data/${groupId}/note`).set(noteText.trim());
           };
 
           const toggleOptionSelection = (originalName) => {
@@ -491,108 +492,69 @@
             document.body.removeChild(textArea);
           };
 
-          // --- 전체 포장 리스트 PDF 인쇄 (최고 화질) ---
+          // --- 전체 포장 리스트 PDF 출력(인쇄) ---
           const handlePrintPDF = () => {
               const printWindow = window.open('', '_blank');
               if (!printWindow) {
-                  alert("팝업 차단이 설정되어 있습니다. 브라우저의 팝업 차단을 해제해주세요.");
+                  alert("팝업 차단이 설정되어 있습니다. 팝업을 허용해주세요!");
                   return;
               }
 
-              let html = `
-              <!DOCTYPE html>
-              <html lang="ko">
-              <head>
-                  <meta charset="UTF-8">
-                  <title>EMBER 포장 체크리스트</title>
-                  <style>
-                      @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;700&display=swap');
-                      body { font-family: 'Pretendard', sans-serif; margin: 0; padding: 20px; color: #0f172a; }
-                      .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #e2e8f0; padding-bottom: 15px; }
-                      .header h1 { margin: 0 0 10px 0; font-size: 26px; letter-spacing: 2px; }
-                      .header p { margin: 0; color: #64748b; font-size: 14px; }
-                      table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-                      th, td { border: 1px solid #cbd5e1; padding: 16px 12px; vertical-align: middle; }
-                      th { background-color: #f8fafc; font-weight: 700; font-size: 15px; border-bottom: 2px solid #94a3b8; }
-                      .item-img { width: 100px; height: 100px; object-fit: cover; border-radius: 6px; border: 1px solid #e2e8f0; display: block; margin: 0 auto; }
-                      .no-img { width: 100px; height: 100px; background-color: #f1f5f9; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #94a3b8; text-align: center; border: 1px solid #e2e8f0; border-radius: 6px; margin: 0 auto; }
-                      .item-name { font-weight: 700; font-size: 18px; margin-bottom: 6px; color: #0f172a; }
-                      .item-note { color: #2563eb; font-size: 14px; margin-bottom: 6px; font-weight: 600; }
-                      .item-opts { color: #475569; font-size: 14px; line-height: 1.5; }
-                      .item-price { font-weight: 700; font-size: 18px; text-align: right; white-space: nowrap; }
-                      @media print {
-                          body { padding: 0; }
-                          @page { margin: 1cm; size: A4 portrait; }
-                          table { page-break-inside: auto; }
-                          tr { page-break-inside: avoid; page-break-after: auto; }
-                          thead { display: table-header-group; }
-                      }
-                  </style>
-              </head>
-              <body>
-                  <div class="header">
-                      <h1>EMBER 포장 확인 리스트</h1>
-                      <p>출력일시: ${new Date().toLocaleString()}</p>
-                  </div>
-                  <table>
-                      <thead>
-                          <tr>
-                              <th style="width: 120px;">사진</th>
-                              <th>상품 정보 (비고 및 옵션)</th>
-                              <th style="width: 140px;">가격</th>
-                          </tr>
-                      </thead>
-                      <tbody>
+              let htmlContent = `
+                  <html>
+                  <head>
+                      <title>EMBER 포장 리스트</title>
+                      <style>
+                          @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;800&display=swap');
+                          body { font-family: 'Pretendard', sans-serif; color: #000; margin: 0; padding: 20px; font-size: 14px; background: #fff; }
+                          h1 { text-align: center; font-size: 24px; margin-bottom: 5px; }
+                          .date { text-align: center; color: #666; font-size: 12px; margin-bottom: 30px; }
+                          .item-box { border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; display: flex; gap: 20px; page-break-inside: avoid; border-radius: 8px; }
+                          .item-img { width: 100px; height: 100px; object-fit: cover; border-radius: 6px; border: 1px solid #eee; background: #f9f9f9; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #aaa; }
+                          .item-info { flex: 1; }
+                          .item-title { font-weight: 800; font-size: 18px; margin: 0 0 5px 0; display: flex; justify-content: space-between; }
+                          .item-price { font-weight: 800; }
+                          .item-note { color: #2563eb; font-weight: 600; margin: 0 0 10px 0; font-size: 13px; }
+                          .item-options { color: #444; line-height: 1.5; }
+                          .sold-out { color: #ef4444; font-weight: bold; }
+                          @media print {
+                              body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                          }
+                      </style>
+                  </head>
+                  <body>
+                      <h1>EMBER - 전체 포장 확인 리스트</h1>
+                      <div class="date">출력일시: ${new Date().toLocaleString()}</div>
               `;
 
-              const itemsToRender = groupedProducts.map(group => {
+              groupedProducts.forEach(group => {
                   const override = firebaseData[group.id] || {};
-                  return { ...group, imageUrl: override.image || null, note: override.note || '' };
+                  const imageUrl = override.image || '';
+                  const note = override.note || '';
+                  const optsText = group.options.map(o => o.isSoldOut ? `<span class="sold-out">${o.displayName}(품절)</span>` : o.displayName).join(', ');
+                  
+                  htmlContent += `
+                      <div class="item-box">
+                          ${imageUrl ? `<img src="${imageUrl}" class="item-img" />` : `<div class="item-img">사진 없음</div>`}
+                          <div class="item-info">
+                              <h3 class="item-title"><span>${group.name}</span><span class="item-price">${group.formattedPrice}원</span></h3>
+                              ${note ? `<p class="item-note">비고: ${note}</p>` : ''}
+                              <div class="item-options">옵션: ${optsText}</div>
+                          </div>
+                      </div>
+                  `;
               });
 
-              if (itemsToRender.length === 0) {
-                  html += `<tr><td colspan="3" style="text-align:center; padding: 40px; color:#94a3b8;">등록된 상품이 없습니다.</td></tr>`;
-              } else {
-                  itemsToRender.forEach(group => {
-                      const optsText = group.options.map(o => `${o.displayName}${o.isSoldOut ? '(품절)' : ''}`).join(', ');
-                      const imgHtml = group.imageUrl 
-                          ? `<img src="${group.imageUrl}" class="item-img" crossorigin="anonymous" />`
-                          : `<div class="no-img">사진 없음</div>`;
-                      
-                      const noteHtml = group.note ? `<div class="item-note">비고: ${group.note}</div>` : '';
-
-                      html += `
-                          <tr>
-                              <td style="text-align: center;">${imgHtml}</td>
-                              <td>
-                                  <div class="item-name">${group.name}</div>
-                                  ${noteHtml}
-                                  <div class="item-opts">옵션: ${optsText}</div>
-                              </td>
-                              <td class="item-price">${group.formattedPrice}원</td>
-                          </tr>
-                      `;
-                  });
-              }
-
-              // Babel 파싱 오류 방지를 위해 script 태그 분리
-              html += `
-                      </tbody>
-                  </table>
-                  <` + `script>
-                      window.onload = function() {
-                          setTimeout(() => {
-                              window.print();
-                          }, 800);
-                      };
-                  <` + `/script>
-              </body>
-              </html>
-              `;
-
-              printWindow.document.open();
-              printWindow.document.write(html);
+              htmlContent += `</body></html>`;
+              
+              printWindow.document.write(htmlContent);
               printWindow.document.close();
+              printWindow.focus();
+              
+              // 렌더링 대기 후 인쇄 창 띄우기
+              setTimeout(() => {
+                  printWindow.print();
+              }, 500);
           };
 
           const totalAmount = selectedOptions.reduce((sum, optName) => {
@@ -604,9 +566,9 @@
           }, 0);
 
           return (
-            <div className="w-full h-full max-w-md bg-white shadow-2xl relative overflow-hidden flex flex-col">
+            <div className="w-full h-full max-w-md bg-white shadow-2xl relative overflow-hidden flex flex-col mx-auto border-x border-slate-200">
                 
-                {/* 상단 헤더 (엠버 정중앙 & 자물쇠 우측 끝) */}
+                {/* 상단 헤더 */}
                 <header className="py-2.5 bg-black flex-shrink-0 z-20 relative flex items-center justify-center">
                   <h1 className="text-lg font-serif text-white tracking-[0.2em] uppercase">EMBER</h1>
                   <button onClick={handleAdminClick} className="absolute right-3 p-2 text-gray-700 hover:text-gray-400" title="관리자">
@@ -625,27 +587,32 @@
 
                 <main className="flex-1 overflow-y-auto bg-slate-50 relative">
                   
-                  {activeTab === 'catalog' && (
-                      <div className="sticky top-0 z-10 bg-white border-b border-slate-200 px-4 py-2.5 shadow-sm flex items-center gap-2">
-                        <div className="relative flex-1">
-                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><SearchIcon className="text-slate-400" /></div>
-                            <input type="text" placeholder="상품명 또는 번호 검색" className="w-full pl-9 pr-4 py-1.5 bg-slate-100 border border-transparent rounded-md text-sm outline-none focus:bg-white focus:border-slate-300 transition-colors" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-                        </div>
+                  {/* 공통 검색 및 새로고침 바 (관리자 모드에서도 보임) */}
+                  <div className="sticky top-0 z-10 bg-white border-b border-slate-200 px-4 py-2.5 shadow-sm flex items-center gap-2">
+                    <div className="relative flex-1">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><SearchIcon className="text-slate-400" /></div>
+                        <input type="text" placeholder="상품명 또는 번호 검색" className="w-full pl-9 pr-4 py-1.5 bg-slate-100 border border-transparent rounded-md text-sm outline-none focus:bg-white focus:border-slate-300 transition-colors" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                    </div>
+                    <button onClick={() => setRefreshKey(prev => prev + 1)} className="shrink-0 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-black rounded-md text-[11px] font-bold flex items-center gap-1 transition-colors border border-transparent active:border-slate-300">
+                        <svg className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                        새로고침
+                    </button>
+                  </div>
 
-                        <button onClick={() => setRefreshKey(prev => prev + 1)} className="shrink-0 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-black rounded-md text-[11px] font-bold flex items-center gap-1 transition-colors border border-transparent active:border-slate-300">
-                            <svg className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                            새로고침
-                        </button>
-                      </div>
-                  )}
+                  {/* 품절 안내 상단 문구 추가 */}
+                  <div className="bg-red-50/60 py-2 px-4 border-b border-red-100/60 text-center shrink-0">
+                      <p className="text-[11px] text-slate-800 font-medium tracking-tight">
+                          ※ <span className="line-through decoration-red-500 decoration-2 font-bold text-red-600 mr-0.5">빨간 취소선</span>은 <span className="font-bold text-red-600">품절 상품</span>으로 주문 불가능합니다. 제품이 목록에 보이지 않으면 <span className="font-bold text-red-600">새로고침</span> 해주세요.
+                      </p>
+                  </div>
 
-                  {/* 관리자 모드 추가 버튼 패널 */}
+                  {/* 관리자 모드: 인쇄 버튼 패널 */}
                   {isAdmin && activeTab === 'admin' && (
                       <div className="p-4 bg-white border-b border-slate-200 shadow-sm">
                           <button onClick={handlePrintPDF} className="w-full py-3 bg-black text-white text-xs font-bold tracking-widest uppercase rounded-lg shadow hover:bg-slate-800 transition flex items-center justify-center gap-2">
                               <span>🖨️ 포장 리스트 인쇄 / PDF 저장</span>
                           </button>
-                          <p className="text-[11px] text-slate-400 text-center mt-2">새 창이 열리며, 브라우저의 'PDF로 저장' 기능을 통해 깨지지 않는 원본 화질로 문서를 저장할 수 있습니다.</p>
+                          <p className="text-[11px] text-slate-400 text-center mt-2">고화질 문서 형태로 인쇄하거나 PDF 파일로 저장할 수 있습니다.</p>
                       </div>
                   )}
 
@@ -655,65 +622,85 @@
                       <ul className="divide-y divide-slate-100 pb-8">
                         {displayProducts.map((group) => (
                             <li key={group.id} className="flex p-4 bg-white">
-                                
-                                {/* 썸네일 (크기 대폭 확대: 110x110) */}
+                                {/* 썸네일 영역 (크기 110px 확대) */}
                                 <div className="shrink-0 mr-4">
                                     {group.imageUrl ? (
-                                        <img src={group.imageUrl} onClick={() => setSelectedImage(group.imageUrl)} className="w-[110px] h-[110px] object-cover rounded-lg border border-slate-200 cursor-pointer shadow-sm" />
+                                        <img 
+                                            src={group.imageUrl} 
+                                            onClick={() => {
+                                                if (isAdmin && activeTab === 'admin') setCropTarget(group);
+                                                else setSelectedImage(group.imageUrl);
+                                            }} 
+                                            className={`w-[110px] h-[110px] object-cover rounded-lg border cursor-pointer shadow-sm ${isAdmin && activeTab === 'admin' ? 'border-blue-400 ring-2 ring-blue-100' : 'border-slate-200'}`} 
+                                        />
                                     ) : (
-                                        <div className="w-[110px] h-[110px] bg-slate-50 flex items-center justify-center rounded-lg border border-slate-200 text-slate-300">
+                                        <div 
+                                            onClick={() => {
+                                                if (isAdmin && activeTab === 'admin') setCropTarget(group);
+                                            }}
+                                            className={`w-[110px] h-[110px] bg-slate-50 flex items-center justify-center rounded-lg border border-slate-200 text-slate-300 ${isAdmin && activeTab === 'admin' ? 'cursor-pointer hover:bg-slate-100 border-dashed border-2' : ''}`}
+                                        >
                                             <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
                                         </div>
                                     )}
                                 </div>
                                 
-                                {/* 텍스트 및 옵션 칩 */}
-                                <div className="flex-1 flex flex-col justify-start min-w-0 py-0.5">
-                                    <div className="flex justify-between items-start gap-2 mb-1">
-                                        <h3 className="font-bold text-[14px] text-slate-900 leading-snug">{group.name}</h3>
+                                {/* 텍스트 및 옵션 영역 */}
+                                <div className="flex-1 flex flex-col justify-center min-w-0">
+                                    <div className="flex justify-between items-start gap-2">
+                                        <h3 className="text-[14px] font-bold text-slate-900 leading-snug truncate">{group.name}</h3>
                                         <span className="text-[14px] font-extrabold text-slate-900 shrink-0">{group.formattedPrice}</span>
                                     </div>
                                     
-                                    {/* 비고란 */}
-                                    {group.note && <p className="text-[11px] text-blue-600 font-medium mt-0.5 truncate">{group.note}</p>}
+                                    {/* 비고란 인라인 편집 (관리자 모드) 또는 일반 텍스트 (고객 모드) */}
+                                    {isAdmin && activeTab === 'admin' ? (
+                                        <input 
+                                            type="text"
+                                            defaultValue={group.note}
+                                            onBlur={(e) => handleSaveNote(group.id, e.target.value)}
+                                            onKeyDown={(e) => { if(e.key === 'Enter') e.target.blur(); }}
+                                            placeholder="📝 비고 입력칸 (클릭하여 입력)"
+                                            className="mt-1 text-[11px] text-blue-600 font-medium bg-blue-50/50 border border-blue-100 rounded px-1.5 py-0.5 outline-none focus:bg-white focus:border-blue-300 w-full transition-colors placeholder:text-blue-300"
+                                        />
+                                    ) : (
+                                        group.note && <p className="text-[11px] text-blue-600 font-medium mt-1 truncate">{group.note}</p>
+                                    )}
                                     
-                                    {/* 옵션 칩 (품절 시 빨간색 취소선) */}
-                                    <div className="mt-2.5 flex flex-wrap content-start gap-1.5">
+                                    {/* 옵션 칩 (기존 가로 배열 및 빨간색 취소선으로 복구) */}
+                                    <div className="mt-2.5 flex flex-wrap gap-1.5">
                                         {group.options.map(opt => {
                                             const isSelected = selectedOptions.includes(opt.originalName);
                                             return (
                                                 <button 
                                                     key={opt.originalName} 
                                                     onClick={() => toggleOptionSelection(opt.originalName)}
-                                                    className={`px-2 py-1 text-[11px] font-bold border rounded-sm transition-colors ${isSelected ? 'bg-black text-white border-black shadow-sm' : 'bg-white text-slate-700 border-slate-300 active:bg-slate-50'} ${opt.isSoldOut ? 'line-through decoration-red-500 decoration-2 text-slate-400' : ''}`}
+                                                    className={`px-2.5 py-1 text-[11px] font-bold border rounded-sm transition-colors ${
+                                                        isSelected 
+                                                            ? 'bg-black text-white border-black shadow-sm' 
+                                                            : 'bg-white text-slate-700 border-slate-300 active:bg-slate-50'
+                                                    }`}
                                                 >
-                                                    {opt.displayName}
+                                                    <span className={opt.isSoldOut && !isSelected ? 'line-through decoration-red-500 decoration-2' : ''}>
+                                                        {opt.displayName}
+                                                    </span>
                                                 </button>
                                             );
                                         })}
                                     </div>
-                                    
-                                    {/* 관리자 도구 */}
-                                    {isAdmin && activeTab === 'admin' && (
-                                        <div className="mt-auto pt-4 flex gap-2">
-                                            <button onClick={() => setCropTarget(group)} className="flex-1 py-1.5 bg-indigo-50 text-indigo-700 text-[10px] font-bold rounded shadow-sm border border-indigo-100">📸 덮어쓰기</button>
-                                            <button onClick={() => setNoteTarget(group)} className="flex-1 py-1.5 bg-blue-50 text-blue-700 text-[10px] font-bold rounded shadow-sm border border-blue-100">📝 비고입력</button>
-                                        </div>
-                                    )}
                                 </div>
                             </li>
                         ))}
                       </ul>
                   )}
 
-                  {/* 스크롤 맨 아래에만 나타나는 꼬리표 */}
+                  {/* 눈에 안 띄게 바뀐 하단 꼬리표 */}
                   {!isLoading && displayProducts.length > 0 && (
-                      <div className="pt-2 pb-6 text-center text-slate-300 text-[8px] uppercase tracking-widest bg-white">
+                      <div className="py-4 text-center text-slate-400/60 text-[9px] uppercase tracking-widest bg-white">
                           <p className="mb-0.5">Ember Sister Official</p>
                           <p>System by. 깔로</p>
                       </div>
                   )}
-                  {selectedOptions.length > 0 && activeTab === 'catalog' && <div className="h-20 bg-white"></div>} 
+                  {selectedOptions.length > 0 && activeTab === 'catalog' && <div className="h-20"></div>} 
                 </main>
 
                 {/* 플로팅 장바구니 바 */}
@@ -737,17 +724,13 @@
                   </div>
                 )}
                 
-                {/* 썸네일 확대 모달 */}
+                {/* 썸네일 확대 모달 (우측 상단 닫기 버튼 추가) */}
                 {selectedImage && (
                   <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-4 animate-fade-in" onClick={() => setSelectedImage(null)}>
-                    <button 
-                        onClick={() => setSelectedImage(null)}
-                        className="absolute top-4 right-4 md:top-6 md:right-6 w-10 h-10 flex items-center justify-center bg-white/10 hover:bg-white/20 text-white/80 hover:text-white rounded-full transition-all backdrop-blur-sm cursor-pointer z-[101]"
-                        title="닫기"
-                    >
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    <button onClick={() => setSelectedImage(null)} className="absolute top-4 right-4 text-white/70 hover:text-white p-2">
+                        <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                     </button>
-                    <img src={selectedImage} className="w-full h-auto max-w-2xl max-h-[85vh] object-contain rounded shadow-2xl relative z-[100]" onClick={e => e.stopPropagation()} />
+                    <img src={selectedImage} className="w-full max-w-2xl h-auto max-h-[85vh] object-contain rounded shadow-2xl" onClick={e => e.stopPropagation()} />
                   </div>
                 )}
 
@@ -768,8 +751,6 @@
                 {/* 크롭 모달 */}
                 {cropTarget && <CropperModal product={cropTarget} onClose={() => setCropTarget(null)} onSave={handleSaveImage} />}
                 
-                {/* 비고 모달 */}
-                {noteTarget && <NoteModal product={noteTarget} currentNote={noteTarget.note} onClose={() => setNoteTarget(null)} onSave={handleSaveNote} />}
             </div>
           );
         }
