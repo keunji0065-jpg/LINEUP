@@ -649,7 +649,7 @@
                   {isInitialLoad ? (
                       <div className="text-center py-20 text-slate-400 text-xs font-bold tracking-widest uppercase">Loading Lineup...</div>
                   ) : (
-                      <ul className="divide-y divide-slate-100 pb-8">
+                      <ul className={`divide-y divide-slate-100 pb-8 transition-opacity duration-200 ${isRefreshing ? 'opacity-40 pointer-events-none grayscale-[20%]' : 'opacity-100'}`}>
                         {displayProducts.map((group) => (
                             <li key={group.id} className="flex p-4 bg-white">
                                 {/* 썸네일 영역 (크기 110px 확대) */}
