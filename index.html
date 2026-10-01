@@ -254,7 +254,11 @@
           
           const [searchTerm, setSearchTerm] = useState("");
           const [toastMessage, setToastMessage] = useState("");
-          const [isLoading, setIsLoading] = useState(true);
+          
+          // 화면 깜빡임 방지를 위해 로딩 상태를 두 개로 분리
+          const [isInitialLoad, setIsInitialLoad] = useState(true); 
+          const [isRefreshing, setIsRefreshing] = useState(false);
+          
           const [selectedImage, setSelectedImage] = useState(null);
           const [refreshKey, setRefreshKey] = useState(0);
           
@@ -282,15 +286,29 @@
 
           // 구글 시트 데이터 로드 및 동적 스마트 그룹화 알고리즘
           useEffect(() => {
+            const controller = new AbortController(); // 추가: 이전 요청 강제 취소용
+            const signal = controller.signal;
+
             const fetchSheetData = async () => {
-              setIsLoading(true);
+              // 최초 로드일 때만 화면을 가리고, 이후 새로고침은 버튼만 돌림
+              if (groupedProducts.length === 0) setIsInitialLoad(true);
+              setIsRefreshing(true);
+              
               try {
-                // 1. 강제 캐시 우회(Cache-Busting)를 위한 타임스탬프 추가
+                // 1. 강제 캐시 우회(Cache-Busting)를 위한 타임스탬프 + 강력한 난수 추가
                 const timestamp = new Date().getTime();
-                const csvUrl = `https://docs.google.com/spreadsheets/d/e/2PACX-1vRI6cW1MyLv5gbcfsjEyYuMDWdL6jDit_Fuz2ZNXPKwEJZeedXoNorHHhUdsoDnDxBzzrFu6P72WVOy/pub?gid=1797935796&single=true&output=csv&t=${timestamp}`;
+                const randomStr = Math.random().toString(36).substring(2, 10);
+                const csvUrl = `https://docs.google.com/spreadsheets/d/e/2PACX-1vRI6cW1MyLv5gbcfsjEyYuMDWdL6jDit_Fuz2ZNXPKwEJZeedXoNorHHhUdsoDnDxBzzrFu6P72WVOy/pub?gid=1797935796&single=true&output=csv&t=${timestamp}&r=${randomStr}`;
                 
-                // 2. 브라우저 캐시도 완벽히 무시하도록 강력한 옵션(cache: 'no-store') 추가
-                const response = await fetch(csvUrl, { cache: 'no-store' });
+                // 2. 브라우저 및 중간 서버 캐시를 완벽히 무시하도록 헤더 강화
+                const response = await fetch(csvUrl, { 
+                    cache: 'no-store',
+                    headers: {
+                        'Pragma': 'no-cache',
+                        'Cache-Control': 'no-cache, no-store, must-revalidate'
+                    },
+                    signal: signal 
+                });
                 const text = await response.text();
                 const rows = text.replace(/\r/g, '').split('\n');
                 
@@ -400,17 +418,29 @@
                   return numA - numB;
                 });
                 
-                setGroupedProducts(groupArray);
-                
-                const allValidOptions = groupArray.flatMap(g => g.options.map(o => o.originalName));
-                setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(name => allValidOptions.includes(name)));
-                setIsLoading(false);
+                // 최후의 응답만 화면에 반영되도록 방어막 설치 (경쟁 상태 완벽 차단)
+                if (!signal.aborted) {
+                    setGroupedProducts(groupArray);
+                    const allValidOptions = groupArray.flatMap(g => g.options.map(o => o.originalName));
+                    setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(name => allValidOptions.includes(name)));
+                    
+                    setIsInitialLoad(false);
+                    setIsRefreshing(false);
+                }
               } catch (error) {
-                console.error("데이터 로드 실패:", error);
-                setIsLoading(false);
+                // 의도적인 통신 취소(Abort)는 에러로 띄우지 않음
+                if (error.name !== 'AbortError') {
+                    console.error("데이터 로드 실패:", error);
+                    setIsInitialLoad(false);
+                    setIsRefreshing(false);
+                }
               }
             };
+            
             fetchSheetData();
+
+            // 새로고침을 또 누르거나 화면을 나가면, 진행 중이던 이전 다운로드를 즉각 폭파시킴
+            return () => { controller.abort(); };
           }, [refreshKey]);
 
           // Firebase 데이터 실시간 수신 (사진, 비고)
@@ -594,12 +624,12 @@
                         <input type="text" placeholder="상품명 또는 번호 검색" className="w-full pl-9 pr-4 py-1.5 bg-slate-100 border border-transparent rounded-md text-sm outline-none focus:bg-white focus:border-slate-300 transition-colors" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                     </div>
                     <button onClick={() => setRefreshKey(prev => prev + 1)} className="shrink-0 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-black rounded-md text-[11px] font-bold flex items-center gap-1 transition-colors border border-transparent active:border-slate-300">
-                        <svg className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                        <svg className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                         새로고침
                     </button>
                   </div>
 
-                  {/* 품절 안내 상단 문구 추가 */}
+                  {/* 품절 안내 상단 문구 */}
                   <div className="bg-red-50/60 py-2 px-4 border-b border-red-100/60 text-center shrink-0">
                       <p className="text-[11px] text-slate-800 font-medium tracking-tight">
                           ※ <span className="text-black font-bold line-through decoration-red-500 decoration-2">취소선</span>은 <span className="font-bold text-red-600">품절 주문불가</span>. 상품이 보이지 않으면 <span className="font-bold text-red-600">새로고침</span>▲
@@ -616,7 +646,7 @@
                       </div>
                   )}
 
-                  {isLoading ? (
+                  {isInitialLoad ? (
                       <div className="text-center py-20 text-slate-400 text-xs font-bold tracking-widest uppercase">Loading Lineup...</div>
                   ) : (
                       <ul className="divide-y divide-slate-100 pb-8">
@@ -694,7 +724,7 @@
                   )}
 
                   {/* 눈에 안 띄게 바뀐 하단 꼬리표 */}
-                  {!isLoading && displayProducts.length > 0 && (
+                  {!isInitialLoad && displayProducts.length > 0 && (
                       <div className="py-4 text-center text-slate-400/60 text-[9px] uppercase tracking-widest bg-white">
                           <p className="mb-0.5">Ember Sister Official</p>
                           <p>System by. 깔로</p>
