@@ -40,13 +40,7 @@
             from { opacity: 0; transform: translateY(5px); }
             to { opacity: 1; transform: translateY(0); }
         }
-        .animate-fade-in { animation: fadeIn 0.25s ease-out forwards; }
-
-        @keyframes pulseSlow {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.55; }
-        }
-        .animate-pulse-slow { animation: pulseSlow 2s infinite; }
+        .animate-fade-in { animation: fadeIn 0.2s ease-out forwards; }
 
         /* 크롭퍼 캔버스 스타일 */
         .crop-canvas-container {
@@ -95,10 +89,10 @@
     </script>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef, useCallback } = React;
+        const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
         // 특수문자 제거 및 안전한 Firebase Key 생성
-        const getSafeKey = (name) => name.replace(/[.#$\[\]]/g, '_');
+        const getSafeKey = (name) => String(name || '').replace(/[.#$\[\]]/g, '_');
 
         // 옵션이 추가되어 그룹명(baseName)이 바뀌더라도(예: "01 치마 빨강" -> "01 치마")
         // 며칠 전 다른 방송의 "01 자켓" 같은 엉뚱한 데이터는 절대 가져오지 않고,
@@ -166,7 +160,6 @@
         // "12:30", "1:05:20", "-38:51", "90" 등의 문자열을 항상 양수 초(Seconds) 단위로 안전하게 변환 (오류 153 원천 방지!)
         const parseTimeToSeconds = (timeStr) => {
             if (timeStr === undefined || timeStr === null || timeStr === '') return null;
-            // 앞에 '-' 부호가 남아있더라도 무조건 제거하여 음수 파라미터로 인한 유튜브 오류 153 방지
             const clean = String(timeStr).trim().replace(/^-+/, '');
             if (!clean) return null;
             if (/^\d+$/.test(clean)) return Math.max(0, parseInt(clean, 10));
@@ -211,14 +204,12 @@
                 const minusSec = parseTimeToSeconds(clean.substring(1));
                 if (minusSec === null) return { time: '', needsSync: false };
 
-                // 실시간 방송 타이머가 켜져 있는 경우: (현재 실시간으로 흐르고 있는 경과시간 - 되감기 시간) = 영구 고정된 시작시간!
                 if (liveStartTimestamp) {
                     const currentElapsedSec = Math.max(0, Math.floor((Date.now() - liveStartTimestamp) / 1000));
                     const targetSec = Math.max(0, currentElapsedSec - minusSec);
                     return { time: formatSecondsToTime(targetSec), needsSync: false };
                 }
 
-                // 상단에 수동 기준 총 방송시간을 적어둔 경우 (자동으로 타이머도 함께 시작!)
                 if (manualTotalTimeStr && manualTotalTimeStr.trim()) {
                     const manualTotalSec = parseTimeToSeconds(manualTotalTimeStr.trim());
                     if (manualTotalSec !== null && manualTotalSec > 0) {
@@ -230,12 +221,24 @@
                     }
                 }
 
-                // 둘 다 안 되어 있으면 기준 시간이 없다는 뜻이므로 안내 필요!
                 return { time: formatSecondsToTime(minusSec), needsSync: true };
             }
 
             const parsed = parseTimeToSeconds(clean);
             return { time: parsed !== null ? formatSecondsToTime(parsed) : clean, needsSync: false };
+        };
+
+        // 1초마다 흐르는 방송 타이머를 별도 경량 컴포넌트로 분리 (전체 상품 리스트 리렌더링/렉 100% 방지!)
+        const LiveTimerText = ({ liveStartTimestamp }) => {
+            const [sec, setSec] = useState(() => liveStartTimestamp ? Math.max(0, Math.floor((Date.now() - liveStartTimestamp) / 1000)) : 0);
+            useEffect(() => {
+                if (!liveStartTimestamp) { setSec(0); return; }
+                const update = () => setSec(Math.max(0, Math.floor((Date.now() - liveStartTimestamp) / 1000)));
+                update();
+                const id = setInterval(update, 1000);
+                return () => clearInterval(id);
+            }, [liveStartTimestamp]);
+            return <>{formatSecondsToTime(sec)}</>;
         };
 
         class ErrorBoundary extends React.Component {
@@ -249,7 +252,7 @@
                             <div className="text-4xl mb-4">⚠️</div>
                             <h2 className="text-lg font-bold mb-2">일시적인 오류가 발생했습니다.</h2>
                             <p className="text-xs text-red-500 mb-6 px-4 break-all">{this.state.errorMessage}</p>
-                            <button onClick={() => { localStorage.removeItem('ember_cart_v3'); window.location.reload(); }} className="px-6 py-3 bg-black text-white text-sm font-bold tracking-widest uppercase rounded">새로고침 및 캐시 초기화</button>
+                            <button onClick={() => { localStorage.removeItem('ember_cart_v3'); localStorage.removeItem('ember_grouped_cache_v1'); window.location.reload(); }} className="px-6 py-3 bg-black text-white text-sm font-bold tracking-widest uppercase rounded">새로고침 및 캐시 초기화</button>
                         </div>
                     );
                 }
@@ -266,16 +269,13 @@
         );
 
         // ==========================================
-        // 영상 / 사진 통합 등록 모달 (유튜브 구간 설정 + 직접 MP4 + 기존 1:1 사진 크롭)
+        // 영상 / 사진 통합 등록 모달 (유튜브 구간 설정 + 직접 MP4 + 800px 경량 고화질 사진 크롭)
         // ==========================================
-        const MediaEditorModal = ({ product, globalYoutubeUrl, liveStartTimestamp, elapsedLiveSec, currentData, onClose, onSaveImage, onSaveVideoInfo, onNotify }) => {
-            const [tab, setTab] = useState('video'); // 'video' | 'image'
-            
-            // 영상 설정 상태
+        const MediaEditorModal = ({ product, globalYoutubeUrl, liveStartTimestamp, currentData, onClose, onSaveImage, onSaveVideoInfo, onNotify }) => {
+            const [tab, setTab] = useState('video');
             const [videoTimeInput, setVideoTimeInput] = useState(currentData?.videoTime || '');
             const [customVideoUrl, setCustomVideoUrl] = useState(currentData?.videoUrl || '');
 
-            // 사진 크롭퍼 상태
             const canvasRef = useRef(null);
             const fileInputRef = useRef(null);
             const [imageObj, setImageObj] = useState(null);
@@ -366,14 +366,14 @@
                     return;
                 }
                 const exportCanvas = document.createElement('canvas');
-                exportCanvas.width = 1080; exportCanvas.height = 1080;
+                // 800x800 해상도 + 0.85 압축률로 화질은 선명하게 유지하면서 로딩 속도는 2배 이상 가볍게 최적화
+                exportCanvas.width = 800; exportCanvas.height = 800;
                 const ctx = exportCanvas.getContext('2d');
-                const ratio = 1080 / 400; 
+                const ratio = 800 / 400; 
                 ctx.drawImage(imageObj, pan.current.x * ratio, pan.current.y * ratio, imageObj.width * scale * ratio, imageObj.height * scale * ratio);
-                onSaveImage(product.id, exportCanvas.toDataURL('image/jpeg', 0.95));
+                onSaveImage(product.id, exportCanvas.toDataURL('image/jpeg', 0.85));
             };
 
-            // 유튜브 타임스탬프 링크 붙여넣기 시 자동으로 시간 추출
             const handleUrlOrTimePaste = (val) => {
                 const extractedTime = extractTimeFromUrl(val);
                 const extractedId = extractYouTubeId(val);
@@ -419,7 +419,6 @@
                             <button onClick={onClose} className="text-2xl text-slate-400 hover:text-black leading-none">&times;</button>
                         </div>
 
-                        {/* 탭 전환: 영상 연결 vs 사진 크롭 */}
                         <div className="flex bg-slate-100 p-1 rounded-lg mb-4">
                             <button 
                                 onClick={() => setTab('video')} 
@@ -438,7 +437,7 @@
                         {tab === 'video' ? (
                             <div className="flex flex-col gap-3">
                                 <div className="bg-red-50 border border-red-100 rounded-lg p-3 text-[11px] text-slate-700 leading-relaxed">
-                                    💡 <b>가장 쉬운 방법:</b> 관리자 상단에서 <b>[전체 라이브 유튜브 주소]</b>를 한 번만 넣어두면, 아래에 <b>시작 시간(예: 15:20)</b>만 적어도 자동으로 유튜브 썸네일과 구간 재생이 연결됩니다!
+                                    💡 <b>가장 쉬운 방법:</b> 관리자 상단에서 <b>[전체 라이브 유튜브 주소]</b>를 한 번만 넣어두면, 아래에 <b>시작 시간(예: 15:20 또는 -15:20)</b>만 적어도 자동으로 연결됩니다!
                                 </div>
 
                                 <div>
@@ -454,7 +453,7 @@
                                     />
                                     <p className="text-[10px] text-slate-500 mt-1 leading-snug">
                                         • 일반 입력: <b>12:30</b> (분:초) 또는 <b>1:05:20</b><br/>
-                                        • <b>매니저 꿀팁:</b> 라이브 중 유튜브 되감기 시 나오는 <b>-15:20</b>을 그대로 적으면 현재 방송 시간({formatSecondsToTime(elapsedLiveSec)})에서 자동 계산해 저장합니다!
+                                        • <b>매니저 꿀팁:</b> 라이브 중 유튜브 되감기 시 나오는 <b>-15:20</b>을 그대로 적으면 현재 흐르는 방송 시간에서 자동 계산해 저장합니다!
                                     </p>
                                 </div>
 
@@ -469,9 +468,6 @@
                                         placeholder="다른 유튜브 쇼츠/영상 또는 .mp4 직링크"
                                         className="w-full border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-xs focus:bg-white focus:border-black outline-none"
                                     />
-                                    <p className="text-[10px] text-slate-400 mt-1">
-                                        비워두면 상단 <b>전체 라이브 방송 영상</b>이 자동 적용됩니다. (유튜브 <code className="text-slate-600">?t=120</code> 포함 링크 붙여넣기 시 시간 자동 추출)
-                                    </p>
                                 </div>
 
                                 {previewYtId && (
@@ -528,13 +524,25 @@
         };
 
         function App() {
-          const [groupedProducts, setGroupedProducts] = useState([]); 
+          // 1) 로컬 캐시로 0.05초 만에 먼저 화면을 띄우고 뒤에서 최신 시트 데이터를 동기화!
+          const [groupedProducts, setGroupedProducts] = useState(() => {
+              try {
+                  const cached = localStorage.getItem('ember_grouped_cache_v1');
+                  const parsed = cached ? JSON.parse(cached) : [];
+                  return Array.isArray(parsed) ? parsed : [];
+              } catch (e) { return []; }
+          }); 
           const [firebaseData, setFirebaseData] = useState({});
           
           const [searchTerm, setSearchTerm] = useState("");
           const [toastMessage, setToastMessage] = useState("");
           
-          const [isInitialLoad, setIsInitialLoad] = useState(true); 
+          const [isInitialLoad, setIsInitialLoad] = useState(() => {
+              try {
+                  const cached = localStorage.getItem('ember_grouped_cache_v1');
+                  return !(cached && JSON.parse(cached).length > 0);
+              } catch (e) { return true; }
+          }); 
           const [isRefreshing, setIsRefreshing] = useState(false);
           
           const [selectedImage, setSelectedImage] = useState(null);
@@ -546,17 +554,15 @@
           const [mediaModalTarget, setMediaModalTarget] = useState(null); 
           const [activeTab, setActiveTab] = useState('catalog');
           
-          const [viewMode, setViewMode] = useState('image'); // 사진/영상형, 글씨형 뷰 상태
+          const [viewMode, setViewMode] = useState('image');
 
           // 세로형 방송에 최적화된 비디오 플레이어 상태
-          // playerLayout: 'floating' (우측하단 세로 미니창 - 쇼핑과 동시 시청 최적) | 'vertical_top' (상단 세로형 큰창) | 'minimized' (소리만/접기)
           const [activeVideo, setActiveVideo] = useState(null); 
           const [playerLayout, setPlayerLayout] = useState('floating'); 
           const [globalYoutubeInput, setGlobalYoutubeInput] = useState("");
-          const [elapsedLiveSec, setElapsedLiveSec] = useState(0);
           const [manualTotalTime, setManualTotalTime] = useState(""); 
-          // 관리자 유튜브 설정 패널 접기/펼치기 상태 (기본값: 접힘)
           const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
+          const [confirmResetAll, setConfirmResetAll] = useState(false);
           
           const adminClickCount = useRef(0);
           const adminTimer = useRef(null);
@@ -572,9 +578,12 @@
 
           useEffect(() => { localStorage.setItem('ember_cart_v3', JSON.stringify(selectedOptions)); }, [selectedOptions]);
 
-          const showToast = (message) => { setToastMessage(message); setTimeout(() => setToastMessage(""), 2200); };
+          const showToast = useCallback((message) => {
+              setToastMessage(message);
+              setTimeout(() => setToastMessage(""), 2200);
+          }, []);
 
-          // 구글 시트 데이터 로드 및 동적 스마트 그룹화 알고리즘
+          // 구글 시트 데이터 로드 및 동적 스마트 그룹화 알고리즘 (백그라운드 무중단 동기화)
           useEffect(() => {
             const controller = new AbortController();
             const signal = controller.signal;
@@ -618,8 +627,6 @@
                       const rawPrice = cols[1] ? String(cols[1]).trim() : '';
                       const numOnly = rawPrice.replace(/[^0-9-]/g, '');
                       const priceNum = parseInt(numOnly, 10);
-                      
-                      // D열(cols[3])에 시작시간이나 영상정보를 적어둔 경우까지 자동 호환
                       const sheetVideoCol = cols[3] ? String(cols[3]).trim() : '';
 
                       if (rawPrice !== '-' && !(priceNum <= 0)) {
@@ -635,7 +642,6 @@
                   }
                 });
 
-                // 하이픈 지원 스마트 그룹화 (예: 12-1 분리 인식)
                 const groupMap = {};
                 validRows.forEach(row => {
                     const numMatch = row.originalName.match(/^([0-9]+(?:-[0-9]+)?)/);
@@ -704,7 +710,6 @@
                     });
                 }
 
-                // 상품명 숫자 기준 내림차순 정렬 (하이픈까지 고려)
                 const groupArray = finalGroups.sort((a, b) => {
                   const matchA = a.name.match(/^(\d+)(?:-(\d+))?/);
                   const matchB = b.name.match(/^(\d+)(?:-(\d+))?/);
@@ -713,18 +718,15 @@
                   const numB = matchB ? parseInt(matchB[1], 10) : -1;
                   
                   if (numA === -1 && numB === -1) return a.name.localeCompare(b.name);
-                  
-                  if (numA !== numB) {
-                      return numB - numA;
-                  } else {
-                      const subA = matchA && matchA[2] ? parseInt(matchA[2], 10) : 0;
-                      const subB = matchB && matchB[2] ? parseInt(matchB[2], 10) : 0;
-                      return subB - subA;
-                  }
+                  if (numA !== numB) return numB - numA;
+                  const subA = matchA && matchA[2] ? parseInt(matchA[2], 10) : 0;
+                  const subB = matchB && matchB[2] ? parseInt(matchB[2], 10) : 0;
+                  return subB - subA;
                 });
                 
                 if (!signal.aborted) {
                     setGroupedProducts(groupArray);
+                    try { localStorage.setItem('ember_grouped_cache_v1', JSON.stringify(groupArray)); } catch (e) {}
                     const allValidOptions = groupArray.flatMap(g => g.options.map(o => o.originalName));
                     setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(name => allValidOptions.includes(name)));
                     
@@ -744,6 +746,14 @@
             return () => { controller.abort(); };
           }, [refreshKey]);
 
+          // 25초마다 백그라운드 자동 새로고침 (고객이 수동으로 안 눌러도 품절 상태 자동 갱신)
+          useEffect(() => {
+              const autoRefreshTimer = setInterval(() => {
+                  setRefreshKey(prev => prev + 1);
+              }, 25000);
+              return () => clearInterval(autoRefreshTimer);
+          }, []);
+
           useEffect(() => {
               const ref = db.ref('ember_live_data');
               ref.on('value', (snap) => {
@@ -761,62 +771,45 @@
           const liveStartTimestamp = firebaseData._global_config?.liveStartTimestamp || null;
           const currentPinnedId = firebaseData._global_config?.currentPinnedId || null;
 
-          // 실시간 방송 경과 시간 타이머 (1초마다 업데이트)
-          useEffect(() => {
-              if (!liveStartTimestamp) {
-                  setElapsedLiveSec(0);
-                  return;
-              }
-              const updateTimer = () => {
-                  const diff = Math.max(0, Math.floor((Date.now() - liveStartTimestamp) / 1000));
-                  setElapsedLiveSec(diff);
-              };
-              updateTimer();
-              const timer = setInterval(updateTimer, 1000);
-              return () => clearInterval(timer);
-          }, [liveStartTimestamp]);
+          // useMemo를 통해 1초마다 타이머가 흘러도 상품 리스트가 재연산되지 않도록 완벽 최적화!
+          const displayProducts = useMemo(() => {
+              return groupedProducts.map(group => {
+                  const { key: matchedFbKey, data: override } = findMatchingFirebaseEntry(group, firebaseData);
+                  const rawVideoUrl = override.videoUrl || "";
+                  const rawVideoTime = override.videoTime || group.sheetVideoCol || "";
+                  const isVideoDisabled = Boolean(override.videoDisabled);
+                  
+                  const resolvedObj = (!isVideoDisabled && rawVideoTime)
+                      ? resolveVideoTimeInput(rawVideoTime, liveStartTimestamp, manualTotalTime)
+                      : { time: "" };
+                  const effectiveVideoTime = typeof resolvedObj === 'object' ? (resolvedObj.time || "") : String(resolvedObj || "");
+                  
+                  const itemYoutubeId = isVideoDisabled 
+                      ? null 
+                      : (extractYouTubeId(rawVideoUrl) || (effectiveVideoTime || globalYoutubeId ? globalYoutubeId : null));
+                  const startSeconds = parseTimeToSeconds(effectiveVideoTime);
+                  const isDirectMp4 = !isVideoDisabled && rawVideoUrl && !extractYouTubeId(rawVideoUrl) && (rawVideoUrl.startsWith('http') || rawVideoUrl.endsWith('.mp4'));
 
-          const displayProducts = groupedProducts.map(group => {
-              // 옵션이 추가되어 그룹명이 바뀌었더라도 기존에 등록한 영상/사진/비고 데이터를 자동으로 추적하여 연결!
-              const { key: matchedFbKey, data: override } = findMatchingFirebaseEntry(group, firebaseData);
-              const rawVideoUrl = override.videoUrl || "";
-              const rawVideoTime = override.videoTime || group.sheetVideoCol || "";
-              const isVideoDisabled = Boolean(override.videoDisabled);
-              
-              // DB에 이미 "-38:51" 형태로 저장되어 있더라도 무조건 양수 시간으로 자동 변환하여 오류 153 원천 차단
-              const resolvedObj = (!isVideoDisabled && rawVideoTime)
-                  ? resolveVideoTimeInput(rawVideoTime, liveStartTimestamp, manualTotalTime)
-                  : { time: "" };
-              const effectiveVideoTime = typeof resolvedObj === 'object' ? (resolvedObj.time || "") : String(resolvedObj || "");
-              
-              // 영상 해제(videoDisabled) 상태가 아닐 때만 유튜브 ID 및 썸네일 연결
-              const itemYoutubeId = isVideoDisabled 
-                  ? null 
-                  : (extractYouTubeId(rawVideoUrl) || (effectiveVideoTime || globalYoutubeId ? globalYoutubeId : null));
-              const startSeconds = parseTimeToSeconds(effectiveVideoTime);
-              const isDirectMp4 = !isVideoDisabled && rawVideoUrl && !extractYouTubeId(rawVideoUrl) && (rawVideoUrl.startsWith('http') || rawVideoUrl.endsWith('.mp4'));
+                  const autoYoutubeThumb = itemYoutubeId ? `https://img.youtube.com/vi/${itemYoutubeId}/mqdefault.jpg` : null;
 
-              // 사진이 없을 때 유튜브 썸네일 자동 사용
-              const autoYoutubeThumb = itemYoutubeId ? `https://img.youtube.com/vi/${itemYoutubeId}/mqdefault.jpg` : null;
+                  return {
+                      ...group,
+                      id: matchedFbKey,
+                      imageUrl: override.image || null,
+                      AutoThumbUrl: autoYoutubeThumb,
+                      note: override.note || '',
+                      videoTime: effectiveVideoTime,
+                      rawVideoTime: rawVideoTime,
+                      videoUrl: rawVideoUrl,
+                      videoDisabled: isVideoDisabled,
+                      youtubeId: itemYoutubeId,
+                      startSeconds: startSeconds !== null ? Math.max(0, startSeconds) : 0,
+                      isDirectMp4: isDirectMp4,
+                      hasVideo: Boolean(itemYoutubeId || isDirectMp4)
+                  };
+              }).filter(g => g.name.toLowerCase().includes(searchTerm.toLowerCase()) || g.options.some(o => o.originalName.toLowerCase().includes(searchTerm.toLowerCase())));
+          }, [groupedProducts, firebaseData, liveStartTimestamp, manualTotalTime, globalYoutubeId, searchTerm]);
 
-              return {
-                  ...group,
-                  id: matchedFbKey, // 기존 DB 키를 그대로 유지하여 수정/저장 시에도 데이터 유실 방지!
-                  imageUrl: override.image || null,
-                  AutoThumbUrl: autoYoutubeThumb,
-                  note: override.note || '',
-                  videoTime: effectiveVideoTime,
-                  rawVideoTime: rawVideoTime,
-                  videoUrl: rawVideoUrl,
-                  videoDisabled: isVideoDisabled,
-                  youtubeId: itemYoutubeId,
-                  startSeconds: startSeconds !== null ? Math.max(0, startSeconds) : 0,
-                  isDirectMp4: isDirectMp4,
-                  hasVideo: Boolean(itemYoutubeId || isDirectMp4)
-              };
-          }).filter(g => g.name.toLowerCase().includes(searchTerm.toLowerCase()) || g.options.some(o => o.originalName.toLowerCase().includes(searchTerm.toLowerCase())));
-
-          // 상품 영상 재생 실행 (기본적으로 세로형 방송에 최적화된 우측 하단 세로 미니창으로 오픈)
           const handlePlayProductVideo = (group) => {
               if (playerLayout === 'minimized') setPlayerLayout('floating');
               const safeStartSec = Math.max(0, Math.floor(Number(group.startSeconds) || 0));
@@ -844,7 +837,6 @@
               }
           };
 
-          // 실시간 라이브 방송 시작/종료 타이머 제어
           const handleStartLiveTimer = () => {
               const now = Date.now();
               db.ref('ember_live_data/_global_config').update({
@@ -860,8 +852,6 @@
               }).then(() => showToast("방송 타이머가 종료되었습니다. (기록된 시간은 영구 유지됩니다)"));
           };
 
-          // 방송 중간에 들어왔을 때 딱 한 번만 현재 방송 경과 시간(예: 52:00)을 입력하면
-          // 그때부터는 시스템이 알아서 1초씩 계속 시간을 측정하도록 Firebase에 시작 시점을 역산해 저장!
           const handleSyncLiveTimerFromMiddle = (customTimeStr) => {
               const targetStr = (customTimeStr !== undefined ? customTimeStr : manualTotalTime).trim();
               if (!targetStr) {
@@ -878,12 +868,11 @@
                   liveStartTimestamp: calculatedStartTimestamp
               }).then(() => {
                   setManualTotalTime("");
-                  setIsAdminPanelOpen(false); // 설정 완료 시 자동으로 깔끔하게 접기
+                  setIsAdminPanelOpen(false);
                   showToast(`⚡ [${formatSecondsToTime(elapsedSec)}]부터 실시간 자동 측정 시작! 패널을 접었습니다.`);
               });
           };
 
-          // 방송 중 원클릭으로 현재 상품 설명 시작시간 자동 찍기 + 고객 화면에 '지금 설명중' 표시
           const handleMarkProductNow = (group) => {
               let formattedTime = "";
               if (liveStartTimestamp) {
@@ -917,7 +906,7 @@
           };
 
           const verifyAdmin = () => {
-              if (authInput === "1234") { 
+              if (authInput === "003637") { 
                   setIsAdmin(true); setShowAuthModal(false); setAuthInput(""); 
                   showToast("관리자 모드가 활성화되었습니다.");
               } else {
@@ -940,8 +929,6 @@
                   currentPinnedId: null
               }).then(() => showToast("🗑️ 전체 유튜브 영상 연결이 삭제되었습니다."));
           };
-
-          const [confirmResetAll, setConfirmResetAll] = useState(false);
 
           const handleResetAllBroadcastData = () => {
               setActiveVideo(null);
@@ -967,7 +954,6 @@
               }).then(() => { showToast(isClearing ? "🗑️ 이 상품의 영상 연결이 해제되었습니다." : "영상 구간 설정이 저장되었습니다."); });
           };
 
-          // 개별 상품의 영상/시작시간 즉시 삭제 버튼 핸들러
           const handleQuickRemoveProductVideo = (groupId, groupName) => {
               if (activeVideo && activeVideo.groupId === groupId) {
                   setActiveVideo(null);
@@ -981,12 +967,10 @@
               });
           };
 
-          // 비고란 인라인 저장 처리
           const handleSaveNote = (groupId, noteText) => {
               db.ref(`ember_live_data/${groupId}/note`).set(noteText.trim());
           };
 
-          // 관리자 목록에서 바로 시작시간(분:초 또는 -분:초) 인라인 저장 처리
           const handleSaveInlineVideoTime = (groupId, timeText) => {
               const trimmed = timeText.trim();
               if (!trimmed) {
@@ -998,7 +982,6 @@
                   showToast("⚠️ 상단 노란 칸에 현재 방송시간(예: 52:00)을 딱 1번만 먼저 알려주세요!");
                   return;
               }
-              // 만약 수식("52:00-38:51")이나 상단 칸에 적어둔 채로 입력했다면, 그 시점부터 자동으로 실시간 타이머도 작동 시작!
               if (autoSyncedStart && !liveStartTimestamp) {
                   db.ref('ember_live_data/_global_config/liveStartTimestamp').set(autoSyncedStart);
               }
@@ -1007,7 +990,8 @@
                   videoDisabled: null
               });
               if (trimmed.startsWith('-')) {
-                  showToast(`⏱️ 현재 방송시간(${formatSecondsToTime(elapsedLiveSec)}) 기준 ${trimmed} ➔ [${resolved}] 자동 변환됨!`);
+                  const nowElapsed = liveStartTimestamp ? formatSecondsToTime(Math.floor((Date.now() - liveStartTimestamp) / 1000)) : '';
+                  showToast(`⏱️ 현재 방송시간(${nowElapsed}) 기준 ${trimmed} ➔ [${resolved}] 자동 변환됨!`);
               } else {
                   showToast(`⏱️ 시작 시간 [${resolved}] 저장 완료!`);
               }
@@ -1078,7 +1062,6 @@
                   const { data: override } = findMatchingFirebaseEntry(group, firebaseData);
                   const isVideoDisabled = Boolean(override.videoDisabled);
                   const ytId = isVideoDisabled ? null : (extractYouTubeId(override.videoUrl) || globalYoutubeId);
-                  const imageUrl = override.image || (ytId ? `https://img.youtube.com/vi/${ytId}/mqdefault.jpg` : '');
                   const videoTime = !isVideoDisabled ? (override.videoTime || group.sheetVideoCol || '') : '';
                   const note = override.note || '';
                   const optsText = group.options.map(o => o.isSoldOut ? `<span class="sold-out">${o.displayName}(품절)</span>` : o.displayName).join(', ');
@@ -1146,7 +1129,7 @@
                         }}
                         className={`absolute left-3 px-2 py-1 text-white text-[10px] font-bold rounded flex items-center gap-1 shadow-sm transition ${liveStartTimestamp ? 'bg-red-600 animate-pulse' : 'bg-red-600 hover:bg-red-700'}`}
                     >
-                        <PlayIcon size={10} /> {liveStartTimestamp ? `LIVE (${formatSecondsToTime(elapsedLiveSec)})` : 'LIVE 다시보기'}
+                        <PlayIcon size={10} /> {liveStartTimestamp ? <>LIVE (<LiveTimerText liveStartTimestamp={liveStartTimestamp} />)</> : 'LIVE 다시보기'}
                     </button>
                   )}
                   <h1 className="text-lg font-serif text-white tracking-[0.2em] uppercase">EMBER</h1>
@@ -1164,9 +1147,7 @@
                     </div>
                 )}
 
-                {/* ==========================================
-                    세로형 유튜브 방송 특화 플레이어 (상단 세로모드 or 우측하단 플로팅 PIP 세로모드)
-                ========================================== */}
+                {/* 세로형 유튜브 방송 특화 플레이어 (상단 세로모드 or 우측하단 플로팅 PIP 세로모드) */}
                 {activeVideo && (
                     <div 
                         className={
@@ -1175,7 +1156,6 @@
                                 : "bg-slate-950 text-white shrink-0 z-30 shadow-lg border-b border-slate-800 animate-fade-in"
                         }
                     >
-                        {/* 플레이어 상단 컨트롤 바 */}
                         <div className="flex items-center justify-between px-2.5 py-1.5 bg-slate-900 text-[11px]">
                             <div className="flex items-center gap-1 truncate pr-1">
                                 <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse shrink-0"></span>
@@ -1238,7 +1218,6 @@
                             </div>
                         </div>
 
-                        {/* 영상 재생 프레임 (세로형 9:16 비율 최적화!) */}
                         {playerLayout !== 'minimized' && (
                             <div className={
                                 playerLayout === 'floating'
@@ -1279,7 +1258,6 @@
                             </div>
                         )}
 
-                        {/* 플로팅 미니창 하단 빠른 버튼 바 */}
                         {playerLayout === 'floating' && activeVideo.type === 'youtube' && (
                             <div className="bg-slate-900 px-2 py-1 flex items-center justify-between border-t border-slate-800">
                                 <span className="text-[9px] text-slate-400 font-bold">
@@ -1300,7 +1278,6 @@
 
                 <main className="flex-1 overflow-y-auto bg-slate-50 relative flex flex-col">
                   
-                  {}
                   {/* 공통 검색 및 새로고침 바 */}
                   <div className="sticky top-0 z-10 bg-white border-b border-slate-200 px-4 py-2.5 shadow-sm flex items-center gap-2">
                     <div className="relative flex-1">
@@ -1308,8 +1285,8 @@
                         <input type="text" placeholder="상품명 또는 번호 검색" className="w-full pl-9 pr-4 py-1.5 bg-slate-100 border border-transparent rounded-md text-sm outline-none focus:bg-white focus:border-slate-300 transition-colors" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                     </div>
                     <button onClick={() => setRefreshKey(prev => prev + 1)} className="shrink-0 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-black rounded-md text-[11px] font-bold flex items-center gap-1 transition-colors border border-transparent active:border-slate-300">
-                        <svg className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                        새로고침
+                        <svg className={`w-3 h-3 ${isRefreshing ? 'animate-spin text-red-600' : ''}`} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                        {isRefreshing ? '갱신중' : '새로고침'}
                     </button>
                   </div>
 
@@ -1330,7 +1307,7 @@
                           </button>
                       </div>
                       <p className="text-[10px] text-slate-800 font-medium tracking-tight text-right leading-snug">
-                          ※ <span className="text-black font-bold line-through decoration-red-500 decoration-2">취소선</span> <span className="font-bold text-red-600">품절</span>. 안보이면 <span className="font-bold text-red-600">새로고침</span>▲
+                          ※ <span className="text-black font-bold line-through decoration-red-500 decoration-2">취소선</span> <span className="font-bold text-red-600">품절</span>. 25초마다 자동갱신▲
                       </p>
                   </div>
 
@@ -1338,7 +1315,6 @@
                   {isAdmin && activeTab === 'admin' && (
                       <div className="px-3 py-2 bg-white border-b border-slate-200 shadow-sm shrink-0 space-y-2">
                           <div className="bg-slate-900 text-white rounded-lg overflow-hidden">
-                              {/* 상단 한 줄 요약 헤더 (클릭 시 접기/펼치기) */}
                               <div 
                                   onClick={() => setIsAdminPanelOpen(prev => !prev)}
                                   className="px-3 py-2 flex items-center justify-between cursor-pointer hover:bg-slate-800/80 transition select-none"
@@ -1348,7 +1324,7 @@
                                       {liveStartTimestamp ? (
                                           <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-500/30">
                                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                                              {formatSecondsToTime(elapsedLiveSec)} 측정중
+                                              <LiveTimerText liveStartTimestamp={liveStartTimestamp} /> 측정중
                                           </span>
                                       ) : globalYoutubeId ? (
                                           <span className="text-[10px] text-slate-300 truncate">유튜브 링크 연동됨</span>
@@ -1361,7 +1337,6 @@
                                   </button>
                               </div>
 
-                              {/* 펼쳐졌을 때만 보이는 상세 설정 영역 */}
                               {isAdminPanelOpen && (
                                   <div className="p-3 pt-2 border-t border-slate-800 space-y-2.5 animate-fade-in">
                                       <div>
@@ -1395,13 +1370,12 @@
                                           </div>
                                       </div>
 
-                                      {/* 실시간 라이브 원클릭 타임스탬프 제어판 */}
                                       <div className="border-t border-slate-800 pt-2.5 flex items-center justify-between gap-2">
                                           <div className="text-[11px]">
                                               {liveStartTimestamp ? (
                                                   <div className="flex items-center gap-1.5">
                                                       <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-                                                      <span className="font-bold text-emerald-400">자동 측정중: {formatSecondsToTime(elapsedLiveSec)}</span>
+                                                      <span className="font-bold text-emerald-400">자동 측정중: <LiveTimerText liveStartTimestamp={liveStartTimestamp} /></span>
                                                   </div>
                                               ) : (
                                                   <span className="text-slate-400">실시간 방송 타이머 대기중</span>
@@ -1426,7 +1400,6 @@
                                           </div>
                                       </div>
 
-                                      {/* 방송 중간에 들어왔을 때 딱 1번만 시간을 알려주면 이후 계속 자동 측정하는 컨트롤러 */}
                                       <div className="bg-slate-800/90 p-2.5 rounded border border-amber-500/40 space-y-1.5">
                                           <div className="text-[11px] text-amber-300 font-bold flex items-center justify-between">
                                               <span>⚡ 현재 방송 경과시간 딱 1번만 알려주기</span>
@@ -1445,7 +1418,7 @@
                                                   value={manualTotalTime}
                                                   onChange={(e) => setManualTotalTime(e.target.value)}
                                                   onKeyDown={(e) => { if (e.key === 'Enter') handleSyncLiveTimerFromMiddle(e.target.value); }}
-                                                  placeholder={liveStartTimestamp ? `현재 ${formatSecondsToTime(elapsedLiveSec)} 흐르는 중 (수정 시 입력)` : "지금 방송 몇 분째인가요? (예: 52:00)"}
+                                                  placeholder="지금 방송 몇 분째인가요? (예: 52:00)"
                                                   className="flex-1 bg-slate-900 border border-amber-400/60 rounded px-2.5 py-1.5 text-[11px] text-amber-300 font-bold outline-none placeholder:text-slate-500"
                                               />
                                               <button 
@@ -1457,7 +1430,6 @@
                                           </div>
                                       </div>
 
-                                      {/* 새 방송 시작 전 예전 방송 찌꺼기 데이터를 한 번에 지우는 초기화 버튼 */}
                                       <div className="border-t border-slate-800 pt-2 flex items-center justify-between">
                                           <span className="text-[10px] text-slate-400">새 방송 전 이전 데이터 정리</span>
                                           {!confirmResetAll ? (
@@ -1520,11 +1492,11 @@
                       );
                   })()}
 
-                  {}
+                  {/* 상품 목록 (새로고침 중에도 화면 멈춤이나 흐려짐 없이 즉시 조작 가능!) */}
                   {isInitialLoad ? (
                       <div className="text-center py-20 text-slate-400 text-xs font-bold tracking-widest uppercase">Loading Lineup...</div>
                   ) : (
-                      <ul className={`divide-y divide-slate-100 pb-8 transition-opacity duration-200 ${isRefreshing ? 'opacity-40 pointer-events-none grayscale-[20%]' : 'opacity-100'}`}>
+                      <ul className="divide-y divide-slate-100 pb-8">
                         {displayProducts.map((group) => {
                             const totalOptionsCount = group.options.length;
                             const soldOutOptionsCount = group.options.filter(o => o.isSoldOut).length;
@@ -1542,6 +1514,8 @@
                                             {displayThumb ? (
                                                 <img 
                                                     src={displayThumb} 
+                                                    loading="lazy"
+                                                    decoding="async"
                                                     onClick={() => {
                                                         if (isAdmin && activeTab === 'admin') {
                                                             setMediaModalTarget(group);
@@ -1574,7 +1548,6 @@
                                                 </div>
                                             )}
 
-                                            {/* 영상 재생 오버레이 아이콘 (영상이 연결된 상품인 경우 표시) */}
                                             {group.hasVideo && !isAllSoldOut && (
                                                 <div 
                                                     onClick={() => {
@@ -1594,7 +1567,6 @@
                                                 </div>
                                             )}
 
-                                            {/* 사진 직접 확대 버튼 (영상과 사진이 둘 다 있을 때 사진 크게 보기 지원) */}
                                             {group.imageUrl && group.hasVideo && activeTab === 'catalog' && (
                                                 <button
                                                     onClick={(e) => { e.stopPropagation(); setSelectedImage(group.imageUrl); }}
@@ -1605,14 +1577,12 @@
                                                 </button>
                                             )}
 
-                                            {/* 일부 품절 (좌측 상단 안쪽 뱃지) */}
                                             {isPartiallySoldOut && (
                                                 <div className="absolute top-1 left-1 bg-red-600/90 text-white text-[9px] px-1 py-0.5 rounded-sm font-extrabold shadow-sm z-10 pointer-events-none">
                                                     일부품절
                                                 </div>
                                             )}
 
-                                            {/* 전체 품절 도장 */}
                                             {isAllSoldOut && (
                                                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded bg-black/5">
                                                     <div className="border-[3px] border-red-600 text-red-600 px-1.5 py-0.5 rounded-sm transform -rotate-12 font-black text-[16px] tracking-tighter bg-transparent drop-shadow-md">
@@ -1626,7 +1596,6 @@
                                     {/* 텍스트 및 옵션 영역 */}
                                     <div className="flex-1 flex flex-col justify-start min-w-0">
                                         
-                                        {/* 상품명 + 가격 + 영상 바로보기 버튼 */}
                                         <div className="flex justify-between items-start gap-1.5">
                                             <div className="flex items-center gap-1 flex-wrap">
                                                 {currentPinnedId === group.id && (
@@ -1639,7 +1608,6 @@
                                             <span className="text-[15px] font-extrabold tracking-tight shrink-0 text-red-600">{group.formattedPrice}원</span>
                                         </div>
 
-                                        {/* 고객 모드에서 바로 누를 수 있는 구간 영상 재생 칩 */}
                                         {group.hasVideo && activeTab === 'catalog' && (
                                             <div className="mt-1 flex items-center gap-1.5">
                                                 <button
@@ -1662,7 +1630,6 @@
                                             </div>
                                         )}
 
-                                        {/* 관리자 모드: 비고란 + 영상 시작시간 빠른 입력칸 + 실시간 원클릭 핀 버튼 + 영상 삭제 버튼 */}
                                         {isAdmin && activeTab === 'admin' ? (
                                             <div className="mt-1 space-y-1">
                                                 <div className="flex gap-1 items-center">
@@ -1748,7 +1715,6 @@
                       </ul>
                   )}
 
-                  {/* 하단 꼬리표 */}
                   {!isInitialLoad && displayProducts.length > 0 && (
                       <div className="py-4 mt-auto text-center text-slate-400/60 text-[9px] uppercase tracking-widest bg-slate-50">
                           <p className="mb-0.5">Ember Sister Official</p>
@@ -1758,7 +1724,6 @@
                   {selectedOptions.length > 0 && activeTab === 'catalog' && <div className="h-20 shrink-0"></div>} 
                 </main>
 
-                {}
                 {/* 플로팅 장바구니 바 */}
                 {selectedOptions.length > 0 && activeTab === 'catalog' && (
                   <div className="absolute bottom-0 left-0 right-0 bg-black text-white px-4 py-3 flex items-center justify-between z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.15)] animate-fade-in">
@@ -1810,7 +1775,6 @@
                         product={mediaModalTarget} 
                         globalYoutubeUrl={globalYoutubeUrl}
                         liveStartTimestamp={liveStartTimestamp}
-                        elapsedLiveSec={elapsedLiveSec}
                         currentData={firebaseData[mediaModalTarget.id]}
                         onClose={() => setMediaModalTarget(null)} 
                         onSaveImage={handleSaveImage}
