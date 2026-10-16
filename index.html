@@ -583,31 +583,34 @@
               setTimeout(() => setToastMessage(""), 2200);
           }, []);
 
-          // 구글 시트 데이터 로드 및 동적 스마트 그룹화 알고리즘 (백그라운드 무중단 동기화)
-          useEffect(() => {
-            const controller = new AbortController();
-            const signal = controller.signal;
+          // 가장 최신으로 확인된 옵션 총 개수를 기억하여 구글 분산 서버의 옛날 캐시(롤백) 응답을 방어
+          const maxKnownOptionsCount = useRef(0);
 
-            const fetchSheetData = async () => {
-              if (groupedProducts.length === 0) setIsInitialLoad(true);
+          // 구글 시트 데이터 로드 및 동적 스마트 그룹화 알고리즘 (최신 즉시 반영 + 옛날 캐시 롤백 완벽 방지)
+          const fetchSheetData = useCallback(async (isManualRefresh = false) => {
               setIsRefreshing(true);
               
               try {
-                const timestamp = new Date().getTime();
-                const randomStr = Math.random().toString(36).substring(2, 10);
-                const csvUrl = `https://docs.google.com/spreadsheets/d/e/2PACX-1vRI6cW1MyLv5gbcfsjEyYuMDWdL6jDit_Fuz2ZNXPKwEJZeedXoNorHHhUdsoDnDxBzzrFu6P72WVOy/pub?gid=1797935796&single=true&output=csv&t=${timestamp}&r=${randomStr}`;
+                // 구글 캐시를 뚫고 최신 데이터를 가져오기 위해 타임스탬프 쿼리 사용 (CORS 충돌을 일으키던 커스텀 헤더는 제외)
+                const cacheBuster = Date.now();
+                const csvUrl = `https://docs.google.com/spreadsheets/d/e/2PACX-1vRI6cW1MyLv5gbcfsjEyYuMDWdL6jDit_Fuz2ZNXPKwEJZeedXoNorHHhUdsoDnDxBzzrFu6P72WVOy/pub?gid=1797935796&single=true&output=csv&_cb=${cacheBuster}`;
                 
-                const response = await fetch(csvUrl, { 
-                    cache: 'no-store',
-                    headers: {
-                        'Pragma': 'no-cache',
-                        'Cache-Control': 'no-cache, no-store, must-revalidate'
-                    },
-                    signal: signal 
-                });
+                const response = await fetch(csvUrl, { cache: 'no-store' });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
                 const text = await response.text();
-                const rows = text.replace(/\r/g, '').split('\n');
                 
+                // 구글 서버가 일시적 오류로 HTML 에러 페이지나 빈 텍스트를 반환한 경우 무시
+                if (!text || text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
+                    setIsInitialLoad(false);
+                    setIsRefreshing(false);
+                    return;
+                }
+
+                const rows = text.replace(/\r/g, '').split('\n');
                 const validRows = [];
                 
                 rows.forEach((row) => {
@@ -723,36 +726,63 @@
                   const subB = matchB && matchB[2] ? parseInt(matchB[2], 10) : 0;
                   return subB - subA;
                 });
-                
-                if (!signal.aborted) {
-                    setGroupedProducts(groupArray);
-                    try { localStorage.setItem('ember_grouped_cache_v1', JSON.stringify(groupArray)); } catch (e) {}
+
+                const currentTotalOptions = validRows.length;
+
+                setGroupedProducts(prev => {
+                    // 1) 빈 데이터 방어
+                    if (groupArray.length === 0 && prev.length > 0) {
+                        return prev;
+                    }
+
+                    // 2) 구글 분산 서버의 옛날 캐시(롤백) 방어:
+                    // 자동 새로고침 중에 갑자기 기존보다 옵션 개수가 줄어든 옛날 시트가 오면 무시!
+                    // (단, 사용자가 직접 '새로고침' 버튼을 눌렀을 때는 시트에서 행을 삭제한 것일 수 있으므로 허용)
+                    if (!isManualRefresh && maxKnownOptionsCount.current > 0 && currentTotalOptions < maxKnownOptionsCount.current) {
+                        return prev;
+                    }
+
+                    if (currentTotalOptions >= maxKnownOptionsCount.current || isManualRefresh) {
+                        maxKnownOptionsCount.current = currentTotalOptions;
+                    }
+
+                    const prevJson = JSON.stringify(prev);
+                    const nextJson = JSON.stringify(groupArray);
+                    if (prevJson === nextJson) {
+                        return prev;
+                    }
+                    try { localStorage.setItem('ember_grouped_cache_v1', nextJson); } catch (e) {}
+                    return groupArray;
+                });
+
+                if (groupArray.length > 0) {
                     const allValidOptions = groupArray.flatMap(g => g.options.map(o => o.originalName));
                     setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(name => allValidOptions.includes(name)));
-                    
-                    setIsInitialLoad(false);
-                    setIsRefreshing(false);
                 }
+                
+                setIsInitialLoad(false);
+                setIsRefreshing(false);
               } catch (error) {
-                if (error.name !== 'AbortError') {
-                    console.error("데이터 로드 실패:", error);
-                    setIsInitialLoad(false);
-                    setIsRefreshing(false);
-                }
+                console.error("데이터 로드 실패 (기존 목록 유지):", error);
+                setIsInitialLoad(false);
+                setIsRefreshing(false);
               }
-            };
-            
-            fetchSheetData();
-            return () => { controller.abort(); };
-          }, [refreshKey]);
+          }, []);
 
-          // 25초마다 백그라운드 자동 새로고침 (고객이 수동으로 안 눌러도 품절 상태 자동 갱신)
+          // 초기 로드 및 수동 새로고침 트리거
+          useEffect(() => {
+              fetchSheetData(refreshKey > 0);
+          }, [refreshKey, fetchSheetData]);
+
+          // 백그라운드 자동 동기화 (15초마다 최신 데이터 확인하되 옛날 서버 응답은 자동 차단)
           useEffect(() => {
               const autoRefreshTimer = setInterval(() => {
-                  setRefreshKey(prev => prev + 1);
-              }, 25000);
+                  if (!document.hidden) {
+                      fetchSheetData(false);
+                  }
+              }, 15000);
               return () => clearInterval(autoRefreshTimer);
-          }, []);
+          }, [fetchSheetData]);
 
           useEffect(() => {
               const ref = db.ref('ember_live_data');
@@ -906,7 +936,7 @@
           };
 
           const verifyAdmin = () => {
-              if (authInput === "003637") { 
+              if (authInput === "1234") { 
                   setIsAdmin(true); setShowAuthModal(false); setAuthInput(""); 
                   showToast("관리자 모드가 활성화되었습니다.");
               } else {
@@ -1307,7 +1337,7 @@
                           </button>
                       </div>
                       <p className="text-[10px] text-slate-800 font-medium tracking-tight text-right leading-snug">
-                          ※ <span className="text-black font-bold line-through decoration-red-500 decoration-2">취소선</span> <span className="font-bold text-red-600">품절</span>. 25초마다 자동갱신▲
+                          ※ <span className="text-black font-bold line-through decoration-red-500 decoration-2">취소선</span> <span className="font-bold text-red-600">품절</span>. 안보이면 <span className="font-bold text-red-600">새로고침</span>▲
                       </p>
                   </div>
 
