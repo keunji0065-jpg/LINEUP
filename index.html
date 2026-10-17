@@ -631,6 +631,7 @@
           const [cropBox, setCropBox] = useState({ x: 50, y: 50, size: 100 }); // size: 100% = 가로폭 꽉 참, 작을수록 확대(Zoom-in) 효과
           const [isInteractiveCrop, setIsInteractiveCrop] = useState(false); // true일 때 영상 위에서 마우스 드래그/휠로 캡처영역 조절
           const [showLiveChat, setShowLiveChat] = useState(true); // 우측 실시간 유튜브 채팅창 표시 여부
+          const [chatDarkBg, setChatDarkBg] = useState(true); // 유튜브 다크모드(흰 글씨)가 잘 보이도록 기본 검정 바탕 적용
           const cropDragRef = useRef({ active: false, startX: 0, startY: 0, origX: 50, origY: 50 });
 
           const [globalYoutubeInput, setGlobalYoutubeInput] = useState("");
@@ -2572,39 +2573,53 @@
 
                             {/* 우측 실시간 유튜브 채팅창 패널 (PC 유튜브 화면과 동일한 구성) */}
                             {showLiveChat && (
-                                <div className="w-[340px] lg:w-[370px] h-full bg-slate-900 border-l border-slate-800 flex flex-col shrink-0">
+                                <div className="w-[340px] lg:w-[370px] h-full bg-[#0f0f0f] border-l border-slate-800 flex flex-col shrink-0">
                                     <div className="px-3 py-2 bg-slate-950 border-b border-slate-800 flex items-center justify-between text-xs">
                                         <span className="font-bold text-slate-200 flex items-center gap-1.5">
                                             <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
                                             실시간 채팅
                                         </span>
-                                        {currentStudioVideoId && (
-                                            <a
-                                                href={`https://www.youtube.com/live_chat?is_popout=1&v=${currentStudioVideoId}`}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded text-[10px] font-bold border border-slate-700 transition"
-                                                title="채팅창이 안 보일 경우 새 팝업창으로 깔끔하게 띄웁니다"
+                                        <div className="flex items-center gap-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => setChatDarkBg(prev => !prev)}
+                                                className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-[10px] font-bold border border-slate-700 transition"
+                                                title="채팅 글씨 색상에 맞춰 배경을 검정색 또는 흰색으로 바꿉니다"
                                             >
-                                                채팅 팝업창 열기 ↗
-                                            </a>
-                                        )}
+                                                {chatDarkBg ? '🌙 검정바탕' : '☀️ 흰바탕'}
+                                            </button>
+                                            {currentStudioVideoId && (
+                                                <a
+                                                    href={`https://www.youtube.com/live_chat?is_popout=1&v=${currentStudioVideoId}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded text-[10px] font-bold border border-slate-700 transition"
+                                                    title="채팅창이 안 보일 경우 새 팝업창으로 깔끔하게 띄웁니다"
+                                                >
+                                                    팝업창 ↗
+                                                </a>
+                                            )}
+                                        </div>
                                     </div>
 
                                     {currentStudioVideoId ? (
-                                        <div className="flex-1 bg-white relative flex flex-col">
+                                        <div 
+                                            style={{ backgroundColor: chatDarkBg ? '#0f0f0f' : '#ffffff', colorScheme: chatDarkBg ? 'dark' : 'light' }}
+                                            className="flex-1 relative flex flex-col transition-colors"
+                                        >
                                             <iframe
-                                                key={`chat_${currentStudioVideoId}_${embedDomain}`}
-                                                src={`https://www.youtube.com/live_chat?v=${currentStudioVideoId}&embed_domain=${embedDomain}`}
+                                                key={`chat_${currentStudioVideoId}_${embedDomain}_${chatDarkBg ? 'dark' : 'light'}`}
+                                                src={`https://www.youtube.com/live_chat?v=${currentStudioVideoId}&embed_domain=${embedDomain}&dark_theme=${chatDarkBg ? 1 : 0}`}
+                                                style={{ backgroundColor: chatDarkBg ? '#0f0f0f' : '#ffffff', colorScheme: chatDarkBg ? 'dark' : 'light' }}
                                                 className="w-full flex-1 border-0"
                                                 title="YouTube Live Chat"
                                             />
                                             <div className="bg-slate-950 px-2.5 py-1.5 text-[10px] text-slate-400 border-t border-slate-800 leading-tight">
-                                                💡 <b>참고:</b> 실시간 스트리밍 진행 중인 영상만 채팅이 표시됩니다. 만약 브라우저 보안이나 로컬 파일 실행으로 인해 채팅이 안 뜰 때는 우측 상단 <b>[채팅 팝업창 열기 ↗]</b>를 누르시면 100% 작동합니다!
+                                                💡 <b>팁:</b> 만약 글씨가 어두워서 안 보이면 상단 <b>[🌙 검정바탕 / ☀️ 흰바탕]</b> 버튼을 눌러 바탕색을 반전시켜 보세요!
                                             </div>
                                         </div>
                                     ) : (
-                                        <div className="flex-1 flex flex-col items-center justify-center text-slate-500 p-6 text-center text-xs">
+                                        <div className="flex-1 flex flex-col items-center justify-center text-slate-500 p-6 text-center text-xs bg-[#0f0f0f]">
                                             <div className="text-3xl mb-2">💬</div>
                                             <p className="font-bold text-slate-300 mb-1">유튜브 영상을 먼저 연동해주세요</p>
                                             <p className="text-[11px] text-slate-500">라이브 방송 주소를 등록하면 이곳에 실시간 채팅창이 나란히 표시됩니다.</p>
