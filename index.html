@@ -524,25 +524,13 @@
         };
 
         function App() {
-          // 1) 로컬 캐시로 0.05초 만에 먼저 화면을 띄우고 뒤에서 최신 시트 데이터를 동기화!
-          const [groupedProducts, setGroupedProducts] = useState(() => {
-              try {
-                  const cached = localStorage.getItem('ember_grouped_cache_v1');
-                  const parsed = cached ? JSON.parse(cached) : [];
-                  return Array.isArray(parsed) ? parsed : [];
-              } catch (e) { return []; }
-          }); 
+          const [groupedProducts, setGroupedProducts] = useState([]); 
           const [firebaseData, setFirebaseData] = useState({});
           
           const [searchTerm, setSearchTerm] = useState("");
           const [toastMessage, setToastMessage] = useState("");
           
-          const [isInitialLoad, setIsInitialLoad] = useState(() => {
-              try {
-                  const cached = localStorage.getItem('ember_grouped_cache_v1');
-                  return !(cached && JSON.parse(cached).length > 0);
-              } catch (e) { return true; }
-          }); 
+          const [isInitialLoad, setIsInitialLoad] = useState(true); 
           const [isRefreshing, setIsRefreshing] = useState(false);
           
           const [selectedImage, setSelectedImage] = useState(null);
@@ -586,12 +574,12 @@
           // 가장 최신으로 확인된 옵션 총 개수를 기억하여 구글 분산 서버의 옛날 캐시(롤백) 응답을 방어
           const maxKnownOptionsCount = useRef(0);
 
-          // 구글 시트 데이터 로드 및 동적 스마트 그룹화 알고리즘 (최신 즉시 반영 + 옛날 캐시 롤백 완벽 방지)
+          // 구글 시트 데이터 로드 및 동적 스마트 그룹화 알고리즘 (시트 비움 즉시 반영 + 옛날 캐시 롤백 방지)
           const fetchSheetData = useCallback(async (isManualRefresh = false) => {
               setIsRefreshing(true);
               
               try {
-                // 구글 캐시를 뚫고 최신 데이터를 가져오기 위해 타임스탬프 쿼리 사용 (CORS 충돌을 일으키던 커스텀 헤더는 제외)
+                // 구글 캐시를 뚫고 최신 데이터를 가져오기 위해 타임스탬프 쿼리 사용
                 const cacheBuster = Date.now();
                 const csvUrl = `https://docs.google.com/spreadsheets/d/e/2PACX-1vRI6cW1MyLv5gbcfsjEyYuMDWdL6jDit_Fuz2ZNXPKwEJZeedXoNorHHhUdsoDnDxBzzrFu6P72WVOy/pub?gid=1797935796&single=true&output=csv&_cb=${cacheBuster}`;
                 
@@ -603,8 +591,8 @@
 
                 const text = await response.text();
                 
-                // 구글 서버가 일시적 오류로 HTML 에러 페이지나 빈 텍스트를 반환한 경우 무시
-                if (!text || text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
+                // 구글 서버가 일시적 오류로 HTML 에러 페이지를 반환한 경우에만 무시 (빈 시트는 정상 처리!)
+                if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
                     setIsInitialLoad(false);
                     setIsRefreshing(false);
                     return;
@@ -729,15 +717,19 @@
 
                 const currentTotalOptions = validRows.length;
 
-                setGroupedProducts(prev => {
-                    // 1) 빈 데이터 방어
-                    if (groupArray.length === 0 && prev.length > 0) {
-                        return prev;
-                    }
+                // 방송 종료 후 시트를 비운 경우(groupArray.length === 0): 캐시를 즉시 지우고 빈 목록 반영!
+                if (groupArray.length === 0) {
+                    maxKnownOptionsCount.current = 0;
+                    try { localStorage.removeItem('ember_grouped_cache_v1'); } catch (e) {}
+                    setGroupedProducts([]);
+                    setSelectedOptions([]);
+                    setIsInitialLoad(false);
+                    setIsRefreshing(false);
+                    return;
+                }
 
-                    // 2) 구글 분산 서버의 옛날 캐시(롤백) 방어:
-                    // 자동 새로고침 중에 갑자기 기존보다 옵션 개수가 줄어든 옛날 시트가 오면 무시!
-                    // (단, 사용자가 직접 '새로고침' 버튼을 눌렀을 때는 시트에서 행을 삭제한 것일 수 있으므로 허용)
+                setGroupedProducts(prev => {
+                    // 방송 도중(상품이 1개 이상일 때) 구글 분산 서버의 몇 초 전 옛날 캐시(옵션 수가 줄어든 응답)만 방어
                     if (!isManualRefresh && maxKnownOptionsCount.current > 0 && currentTotalOptions < maxKnownOptionsCount.current) {
                         return prev;
                     }
@@ -751,22 +743,24 @@
                     if (prevJson === nextJson) {
                         return prev;
                     }
-                    try { localStorage.setItem('ember_grouped_cache_v1', nextJson); } catch (e) {}
                     return groupArray;
                 });
 
-                if (groupArray.length > 0) {
-                    const allValidOptions = groupArray.flatMap(g => g.options.map(o => o.originalName));
-                    setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(name => allValidOptions.includes(name)));
-                }
+                const allValidOptions = groupArray.flatMap(g => g.options.map(o => o.originalName));
+                setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(name => allValidOptions.includes(name)));
                 
                 setIsInitialLoad(false);
                 setIsRefreshing(false);
               } catch (error) {
-                console.error("데이터 로드 실패 (기존 목록 유지):", error);
+                console.error("데이터 로드 실패:", error);
                 setIsInitialLoad(false);
                 setIsRefreshing(false);
               }
+          }, []);
+
+          // 기존에 사용자 브라우저에 남아있던 구버전 상품 캐시(ember_grouped_cache_v1) 접속 즉시 자동 삭제
+          useEffect(() => {
+              try { localStorage.removeItem('ember_grouped_cache_v1'); } catch (e) {}
           }, []);
 
           // 초기 로드 및 수동 새로고침 트리거
@@ -964,8 +958,16 @@
               setActiveVideo(null);
               setGlobalYoutubeInput("");
               setConfirmResetAll(false);
+              maxKnownOptionsCount.current = 0;
+              try {
+                  localStorage.removeItem('ember_grouped_cache_v1');
+                  localStorage.removeItem('ember_cart_v3');
+              } catch (e) {}
               db.ref('ember_live_data').remove()
-                .then(() => showToast("🧹 이전 방송의 모든 영상/사진/비고 데이터가 깔끔하게 초기화되었습니다!"));
+                .then(() => {
+                    fetchSheetData(true);
+                    showToast("🧹 이전 방송 데이터 및 캐시가 모두 초기화되었습니다!");
+                });
           };
 
           const handleSaveImage = (groupId, base64Image) => {
@@ -1525,6 +1527,16 @@
                   {/* 상품 목록 (새로고침 중에도 화면 멈춤이나 흐려짐 없이 즉시 조작 가능!) */}
                   {isInitialLoad ? (
                       <div className="text-center py-20 text-slate-400 text-xs font-bold tracking-widest uppercase">Loading Lineup...</div>
+                  ) : displayProducts.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-24 px-4 text-center">
+                          <div className="text-3xl mb-2 opacity-40">🛍️</div>
+                          <p className="text-sm font-bold text-slate-600 mb-1">
+                              {searchTerm ? "검색된 상품이 없습니다." : "현재 준비된 방송 상품 목록이 없습니다."}
+                          </p>
+                          <p className="text-[11px] text-slate-400">
+                              {searchTerm ? "다른 검색어를 입력해보세요." : "다음 라이브 방송 라인업을 기대해주세요!"}
+                          </p>
+                      </div>
                   ) : (
                       <ul className="divide-y divide-slate-100 pb-8">
                         {displayProducts.map((group) => {
