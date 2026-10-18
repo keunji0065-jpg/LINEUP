@@ -2716,16 +2716,15 @@
                                 </div>
 
                                 {/* 하단: 재생바 미세 이동 리모컨 + 1:1 캡처 박스 위치/확대 조절 컨트롤러 */}
-                                <div className="bg-slate-900 border-t border-slate-800 p-3 space-y-2.5 shrink-0">
-                                    {}
-                                    {/* 영상 바깥에 만든 전용 재생 탐색 바 (유튜브 영상 위에 빨간 바가 안 찍히도록 밖으로 뺌!) */}
-                                    <div className="flex items-center gap-2.5 bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
+                                <div className="bg-slate-900 border-t border-slate-800 px-3 py-2 space-y-1.5 shrink-0">
+                                    {/* 영상 바깥에 만든 전용 재생 탐색 바 */}
+                                    <div className="flex items-center gap-2 bg-slate-950 px-2.5 py-1.5 rounded-lg border border-slate-800">
                                         <button
                                             type="button"
                                             onClick={handleTogglePlayPause}
-                                            className="px-2.5 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-extrabold shrink-0 shadow transition"
+                                            className="px-2.5 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-[11px] font-extrabold shrink-0 shadow transition"
                                         >
-                                            {isPlayerPlaying ? '⏸ 일시정지' : '▶ 재생'}
+                                            {isPlayerPlaying ? '⏸ 정지' : '▶ 재생'}
                                         </button>
                                         <input
                                             type="range"
@@ -2733,90 +2732,84 @@
                                             max={Math.max(playerDuration, currentPlayerSec, 3600)}
                                             value={currentPlayerSec}
                                             onChange={(e) => handleSeekToAbsolute(e.target.value)}
-                                            className="flex-1 accent-red-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
-                                            title="이 슬라이더를 움직여 원하는 시간으로 이동하면 영상 안에 빨간 바가 전혀 안 찍힙니다!"
+                                            className="flex-1 min-w-0 accent-red-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
                                         />
-                                        <span className="text-[11px] font-mono font-bold text-amber-300 shrink-0">
+                                        <span className="text-[11px] font-mono font-bold text-amber-300 shrink-0 whitespace-nowrap">
                                             {formatSecondsToTime(currentPlayerSec)}
                                             {playerDuration > 0 ? ` / ${formatSecondsToTime(playerDuration)}` : ''}
                                         </span>
                                     </div>
 
-                                    {/* 재생 시간 미세 이동 버튼 */}
-                                    <div className="flex items-center justify-between gap-2">
-                                        <span className="text-[11px] text-slate-400">
-                                            💡 아래 슬라이더와 버튼으로 장면을 맞추면 화면에 빨간 바나 정지 아이콘이 안 뜹니다!
-                                        </span>
-                                        <div className="flex items-center gap-1 shrink-0">
-                                            <button onClick={() => handleSeekRelative(-10)} className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-xs font-bold border border-slate-700">-10초</button>
-                                            <button onClick={() => handleSeekRelative(-5)} className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-xs font-bold border border-slate-700">-5초</button>
-                                            <button onClick={() => handleSeekRelative(-1)} className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded text-xs font-bold border border-slate-700">-1초</button>
-                                            <button onClick={() => handleSeekRelative(1)} className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded text-xs font-bold border border-slate-700">+1초</button>
-                                            <button onClick={() => handleSeekRelative(5)} className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-xs font-bold border border-slate-700">+5초</button>
-                                            <button onClick={() => handleSeekRelative(10)} className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-xs font-bold border border-slate-700">+10초</button>
-                                        </div>
+                                    {/* 재생 시간 미세 이동 버튼 (세로로 깨지던 안내 문구 삭제 & 6칸 균등 배치) */}
+                                    <div className="grid grid-cols-6 gap-1">
+                                        <button onClick={() => handleSeekRelative(-10)} className="py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-bold border border-slate-700 whitespace-nowrap">-10초</button>
+                                        <button onClick={() => handleSeekRelative(-5)} className="py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-bold border border-slate-700 whitespace-nowrap">-5초</button>
+                                        <button onClick={() => handleSeekRelative(-1)} className="py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded text-[11px] font-bold border border-slate-700 whitespace-nowrap">-1초</button>
+                                        <button onClick={() => handleSeekRelative(1)} className="py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded text-[11px] font-bold border border-slate-700 whitespace-nowrap">+1초</button>
+                                        <button onClick={() => handleSeekRelative(5)} className="py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-bold border border-slate-700 whitespace-nowrap">+5초</button>
+                                        <button onClick={() => handleSeekRelative(10)} className="py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-bold border border-slate-700 whitespace-nowrap">+10초</button>
                                     </div>
 
                                     {/* 1:1 캡처 영역(확대/축소 및 상하좌우 이동) 조절 패널 */}
-                                    <div className="bg-slate-950/90 p-2.5 rounded-lg border border-slate-800 space-y-2">
-                                        <div className="flex items-center justify-between">
-                                            <span className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5">
-                                                <span>📐 1:1 캡처 위치 · 확대 조절</span>
+                                    <div className="bg-slate-950/90 px-2.5 py-2 rounded-lg border border-slate-800 space-y-1.5">
+                                        <div className="flex items-center justify-between gap-1">
+                                            <span className="text-[11px] font-bold text-slate-200 whitespace-nowrap truncate">
+                                                📐 1:1 캡처 영역 조절
                                             </span>
-                                            <div className="flex items-center gap-1.5">
+                                            <div className="flex items-center gap-1 shrink-0">
                                                 <button
                                                     type="button"
                                                     onClick={() => setIsInteractiveCrop(prev => !prev)}
-                                                    className={`px-2.5 py-1 rounded text-[11px] font-extrabold transition ${
+                                                    className={`px-2 py-0.5 rounded text-[10px] font-extrabold transition whitespace-nowrap ${
                                                         isInteractiveCrop 
                                                             ? 'bg-amber-400 text-black shadow' 
                                                             : 'bg-slate-800 text-amber-300 border border-amber-500/40 hover:bg-slate-700'
                                                     }`}
                                                 >
-                                                    {isInteractiveCrop ? '✅ 마우스 드래그 이동 ON (클릭해 잠금)' : '✋ 마우스로 박스 직접 옮기기'}
+                                                    {isInteractiveCrop ? '✅ 드래그 이동 ON' : '✋ 마우스 이동'}
                                                 </button>
                                                 <button
                                                     type="button"
                                                     onClick={() => { setCropBox({ x: 50, y: 50, size: 100 }); setIsInteractiveCrop(false); }}
-                                                    className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[10px] font-bold"
+                                                    className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[10px] font-bold whitespace-nowrap"
                                                 >
-                                                    정중앙 초기화
+                                                    초기화
                                                 </button>
                                             </div>
                                         </div>
 
-                                        <div className="grid grid-cols-3 gap-2 text-[10px] text-slate-300 pt-0.5">
-                                            <div className="flex flex-col gap-1">
-                                                <div className="flex justify-between">
-                                                    <span>↕ 상하 위치</span>
+                                        <div className="grid grid-cols-3 gap-2 text-[10px] text-slate-300">
+                                            <div className="flex flex-col gap-0.5 min-w-0">
+                                                <div className="flex justify-between whitespace-nowrap">
+                                                    <span>↕ 상하</span>
                                                     <span className="text-amber-300 font-bold">{Math.round(cropBox.y)}%</span>
                                                 </div>
                                                 <input 
                                                     type="range" min="0" max="100" value={cropBox.y}
                                                     onChange={(e) => setCropBox(prev => ({ ...prev, y: Number(e.target.value) }))}
-                                                    className="w-full accent-amber-400 cursor-pointer"
+                                                    className="w-full accent-amber-400 cursor-pointer h-1.5"
                                                 />
                                             </div>
-                                            <div className="flex flex-col gap-1">
-                                                <div className="flex justify-between">
-                                                    <span>🔍 확대(줌)</span>
+                                            <div className="flex flex-col gap-0.5 min-w-0">
+                                                <div className="flex justify-between whitespace-nowrap">
+                                                    <span>🔍 확대</span>
                                                     <span className="text-amber-300 font-bold">{Math.round(10000 / cropBox.size)}%</span>
                                                 </div>
                                                 <input 
                                                     type="range" min="35" max="100" value={135 - cropBox.size}
                                                     onChange={(e) => setCropBox(prev => ({ ...prev, size: 135 - Number(e.target.value) }))}
-                                                    className="w-full accent-amber-400 cursor-pointer"
+                                                    className="w-full accent-amber-400 cursor-pointer h-1.5"
                                                 />
                                             </div>
-                                            <div className="flex flex-col gap-1">
-                                                <div className="flex justify-between">
-                                                    <span>↔ 좌우 위치</span>
+                                            <div className="flex flex-col gap-0.5 min-w-0">
+                                                <div className="flex justify-between whitespace-nowrap">
+                                                    <span>↔ 좌우</span>
                                                     <span className="text-amber-300 font-bold">{Math.round(cropBox.x)}%</span>
                                                 </div>
                                                 <input 
                                                     type="range" min="0" max="100" value={cropBox.x}
                                                     onChange={(e) => setCropBox(prev => ({ ...prev, x: Number(e.target.value) }))}
-                                                    className="w-full accent-amber-400 cursor-pointer"
+                                                    className="w-full accent-amber-400 cursor-pointer h-1.5"
                                                 />
                                             </div>
                                         </div>
