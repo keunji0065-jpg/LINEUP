@@ -256,16 +256,16 @@
             }
         }
 
-        const SearchIcon = ({ size = 18 }) => (
-            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        const SearchIcon = ({ size = 16, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
         );
 
-        const PlayIcon = ({ size = 14, className = "" }) => (
-            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-        );
+        const PlayIcon = ({ size = 16, className = "" }) => {
+            return <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>;
+        };
 
-        // 유튜브 재생바(스크롤) 위치를 0.5초마다 실시간으로 읽어오는 스마트 플레이어 컴포넌트
-        const SmartYouTubePlayer = ({ videoId, startSeconds, isLive, playKey, onTimeUpdate, playerRef }) => {
+        // 유튜브 재생바(스크롤) 위치를 실시간으로 읽어오는 스마트 플레이어 컴포넌트 (스튜디오 클린 모드 지원)
+        const SmartYouTubePlayer = ({ videoId, startSeconds, isLive, playKey, hideControls = false, onTimeUpdate, onDurationChange, onStateChange, onVideoUnavailable, playerRef }) => {
             const containerId = useRef(`yt-player-${Math.random().toString(36).substring(2, 9)}`);
 
             useEffect(() => {
@@ -285,6 +285,11 @@
                                 autoplay: 1,
                                 playsinline: 1,
                                 rel: 0,
+                                controls: hideControls ? 0 : 1,
+                                modestbranding: 1,
+                                iv_load_policy: 3,
+                                disablekb: hideControls ? 1 : 0,
+                                fs: hideControls ? 0 : 1,
                                 start: (!isLive && startSeconds > 0) ? Math.max(0, Math.floor(startSeconds)) : undefined
                             },
                             events: {
@@ -293,6 +298,10 @@
                                     if (!isLive && startSeconds > 0 && event.target.seekTo) {
                                         event.target.seekTo(startSeconds, true);
                                     }
+                                    if (onDurationChange && typeof event.target.getDuration === 'function') {
+                                        const dur = event.target.getDuration();
+                                        if (dur && dur > 0) onDurationChange(Math.floor(dur));
+                                    }
                                     timeCheckInterval = setInterval(() => {
                                         try {
                                             if (event.target && typeof event.target.getCurrentTime === 'function') {
@@ -300,9 +309,29 @@
                                                 if (cur && !isNaN(cur) && cur > 0) {
                                                     onTimeUpdate(Math.floor(cur));
                                                 }
+                                                if (onDurationChange && typeof event.target.getDuration === 'function') {
+                                                    const dur = event.target.getDuration();
+                                                    if (dur && dur > 0) onDurationChange(Math.floor(dur));
+                                                }
                                             }
                                         } catch (err) {}
-                                    }, 400);
+                                    }, 350);
+                                },
+                                onStateChange: (event) => {
+                                    if (onStateChange) {
+                                        // 1 === YT.PlayerState.PLAYING
+                                        onStateChange(event.data === 1);
+                                    }
+                                    if (onDurationChange && event.target && typeof event.target.getDuration === 'function') {
+                                        const dur = event.target.getDuration();
+                                        if (dur && dur > 0) onDurationChange(Math.floor(dur));
+                                    }
+                                },
+                                onError: (event) => {
+                                    // 에러 코드 100(삭제/비공개), 101/150(임베드 차단 또는 비공개) 발생 시 즉시 비공개 처리
+                                    if (onVideoUnavailable) {
+                                        onVideoUnavailable(videoId);
+                                    }
                                 }
                             }
                         });
@@ -329,7 +358,7 @@
                         try { playerInstance.destroy(); } catch (e) {}
                     }
                 };
-            }, [videoId, startSeconds, isLive, playKey]);
+            }, [videoId, startSeconds, isLive, playKey, hideControls]);
 
             return <div id={containerId.current} className="w-full h-full"></div>;
         };
@@ -620,6 +649,9 @@
           const [activeVideo, setActiveVideo] = useState(null); 
           const [playerLayout, setPlayerLayout] = useState('floating'); 
           const [currentPlayerSec, setCurrentPlayerSec] = useState(0); // 현재 유튜브 영상이 재생 중인 초(Seconds)
+          const [playerDuration, setPlayerDuration] = useState(0); // 전체 영상 길이(초) - 외부 슬라이더 탐색용
+          const [isPlayerPlaying, setIsPlayerPlaying] = useState(true); // 현재 재생 중인지 일시정지인지 상태
+          const [hideYoutubeUi, setHideYoutubeUi] = useState(true); // 유튜브 자체 하단 빨간바/일시정지 아이콘 숨김 클린모드 (기본 ON)
           const ytPlayerRef = useRef(null); // 유튜브 플레이어 제어 리모컨 참조
           const html5VideoRef = useRef(null);
           const playerViewportRef = useRef(null); // 세로형(9:16) 영상 영역 위치 추적용 Ref
@@ -664,6 +696,8 @@
           const [manualTotalTime, setManualTotalTime] = useState(""); 
           const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
           const [confirmResetAll, setConfirmResetAll] = useState(false);
+          // 비공개 또는 삭제된 것으로 확인된 유튜브 영상 ID 목록 (자동으로 사진 전용 모드로 전환)
+          const [unavailableYtIds, setUnavailableYtIds] = useState({});
           
           const adminClickCount = useRef(0);
           const adminTimer = useRef(null);
@@ -945,11 +979,100 @@
               return () => ref.off();
           }, []);
 
-          const globalYoutubeUrl = firebaseData._global_config?.youtubeUrl || "";
-          const globalYoutubeId = extractYouTubeId(globalYoutubeUrl);
+          const rawGlobalYoutubeUrl = firebaseData._global_config?.youtubeUrl || "";
+          const rawGlobalYoutubeId = extractYouTubeId(rawGlobalYoutubeUrl);
+
+          // 유튜브 영상 ID별로 공개/비공개(삭제) 여부를 2중(oEmbed + 썸네일 해상도)으로 정밀 판별하는 함수
+          const checkYouTubeVideoPublic = useCallback((ytId) => {
+              if (!ytId) return;
+
+              const markUnavailable = () => {
+                  setUnavailableYtIds(prev => prev[ytId] ? prev : { ...prev, [ytId]: true });
+              };
+              const markAvailable = () => {
+                  setUnavailableYtIds(prev => {
+                      if (!prev[ytId]) return prev;
+                      const next = { ...prev };
+                      delete next[ytId];
+                      return next;
+                  });
+              };
+
+              // 1차: 유튜브 썸네일(mqdefault: 정상 320x180, 비공개/삭제 시 120x90 기본 회색 이미지 반환) 즉시 검사
+              const img = new Image();
+              img.onload = () => {
+                  if (img.naturalWidth > 0 && img.naturalWidth <= 120) {
+                      markUnavailable();
+                  } else {
+                      // 2차: oEmbed로 임베드 가능 여부 및 비공개 상태 최종 확인
+                      fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${ytId}&format=json`)
+                          .then(res => {
+                              if (!res.ok) markUnavailable();
+                              else markAvailable();
+                          })
+                          .catch(() => {
+                              // 네트워크/CORS 이슈 시 썸네일이 정상이면 살아있는 것으로 유지
+                              markAvailable();
+                          });
+                  }
+              };
+              img.onerror = () => {
+                  markUnavailable();
+              };
+              img.src = `https://img.youtube.com/vi/${ytId}/mqdefault.jpg`;
+          }, []);
+
+          // 전체 유튜브 ID 및 각 상품별로 등록된 모든 개별 유튜브 ID들을 수집하여 상품별로 생사 판별!
+          useEffect(() => {
+              const idsToCheck = new Set();
+              if (rawGlobalYoutubeId) idsToCheck.add(rawGlobalYoutubeId);
+
+              // Firebase에 저장된 개별 상품의 videoUrl 검사
+              Object.keys(firebaseData).forEach(k => {
+                  if (k !== '_global_config' && k !== '_live_catalog' && firebaseData[k]) {
+                      const cid = extractYouTubeId(firebaseData[k].videoUrl);
+                      if (cid) idsToCheck.add(cid);
+                  }
+              });
+
+              // 구글 시트 4번째 열(D열)에 혹시 개별 유튜브 링크가 적혀있는 상품도 검사
+              groupedProducts.forEach(g => {
+                  const sheetYtId = extractYouTubeId(g.sheetVideoCol);
+                  if (sheetYtId) idsToCheck.add(sheetYtId);
+              });
+
+              idsToCheck.forEach(id => checkYouTubeVideoPublic(id));
+              const timer = setInterval(() => {
+                  idsToCheck.forEach(id => checkYouTubeVideoPublic(id));
+              }, 25000);
+              return () => clearInterval(timer);
+          }, [rawGlobalYoutubeId, firebaseData, groupedProducts, checkYouTubeVideoPublic]);
+
+          // 비공개로 확인된 영상은 자동으로 null 처리하여 사진만 나오도록 전환
+          const isGlobalVideoPrivate = Boolean(rawGlobalYoutubeId && unavailableYtIds[rawGlobalYoutubeId]);
+          const globalYoutubeUrl = isGlobalVideoPrivate ? "" : rawGlobalYoutubeUrl;
+          const globalYoutubeId = isGlobalVideoPrivate ? null : rawGlobalYoutubeId;
           const liveStartTimestamp = firebaseData._global_config?.liveStartTimestamp || null;
           const currentPinnedId = firebaseData._global_config?.currentPinnedId || null;
           const isStoreClosed = Boolean(firebaseData._global_config?.isStoreClosed);
+
+          // 플레이어 재생 중 비공개/오류 발생 시 즉시 닫고 해당 상품 사진이 있으면 사진을 띄워줌
+          const handleVideoUnavailable = useCallback((badYtId) => {
+              if (!badYtId) return;
+              setUnavailableYtIds(prev => ({ ...prev, [badYtId]: true }));
+              setActiveVideo(prev => {
+                  if (prev && prev.videoId === badYtId) {
+                      const targetGroup = groupedProducts.find(g => g.id === prev.groupId);
+                      const override = targetGroup ? findMatchingFirebaseEntry(targetGroup, firebaseData).data : null;
+                      if (override?.image) {
+                          setSelectedImage(override.image);
+                      }
+                      return null;
+                  }
+                  return prev;
+              });
+              showToast("비공개된 영상이어서 사진 보기 모드로 자동 전환되었습니다.");
+          }, [groupedProducts, firebaseData, showToast]);
 
           const handleToggleStoreClosed = (e) => {
               if (e) e.stopPropagation();
@@ -1025,6 +1148,39 @@
                   const nextSec = Math.max(0, html5VideoRef.current.currentTime + deltaSec);
                   html5VideoRef.current.currentTime = nextSec;
                   setCurrentPlayerSec(Math.floor(nextSec));
+              }
+          };
+
+          // 유튜브 화면을 직접 클릭하지 않고도 외부에서 깔끔하게 재생/일시정지 전환
+          const handleTogglePlayPause = () => {
+              if (ytPlayerRef.current && typeof ytPlayerRef.current.getPlayerState === 'function') {
+                  const state = ytPlayerRef.current.getPlayerState();
+                  if (state === 1) { // 재생 중이면 일시정지
+                      ytPlayerRef.current.pauseVideo();
+                      setIsPlayerPlaying(false);
+                  } else {
+                      ytPlayerRef.current.playVideo();
+                      setIsPlayerPlaying(true);
+                  }
+              } else if (html5VideoRef.current) {
+                  if (html5VideoRef.current.paused) {
+                      html5VideoRef.current.play();
+                      setIsPlayerPlaying(true);
+                  } else {
+                      html5VideoRef.current.pause();
+                      setIsPlayerPlaying(false);
+                  }
+              }
+          };
+
+          // 외부 슬라이더 바로 원하는 시간(초)으로 즉시 이동
+          const handleSeekToAbsolute = (targetSec) => {
+              const sec = Math.max(0, Number(targetSec) || 0);
+              setCurrentPlayerSec(Math.floor(sec));
+              if (ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+                  ytPlayerRef.current.seekTo(sec, true);
+              } else if (html5VideoRef.current) {
+                  html5VideoRef.current.currentTime = sec;
               }
           };
 
@@ -1124,12 +1280,30 @@
               const capVideo = await ensureScreenCaptureStream();
               if (!capVideo || !capVideo.videoWidth) return null;
 
+              // ★ 핵심 해결책: 유튜브가 일시정지(Paused) 상태이면 화면 정중앙에 큼직한 (||) 일시정지 아이콘과 하단 빨간 바를 띄웁니다.
+              // 따라서 일시정지 상태에서 캡처를 누르면, 찍는 순간 0.25초 동안만 살짝 무음 재생(playVideo)시켜 유튜브의 일시정지 아이콘과 하단 바를 완전히 증발시킨 뒤 찍고 다시 멈춰줍니다!
+              let wasPausedBeforeCapture = false;
+              let wasMutedBeforeCapture = false;
+              try {
+                  if (ytPlayerRef.current && typeof ytPlayerRef.current.getPlayerState === 'function') {
+                      const st = ytPlayerRef.current.getPlayerState();
+                      if (st !== 1) { // 1(PLAYING)이 아니면 (일시정지 상태 등)
+                          wasPausedBeforeCapture = true;
+                          wasMutedBeforeCapture = ytPlayerRef.current.isMuted ? ytPlayerRef.current.isMuted() : false;
+                          if (ytPlayerRef.current.mute) ytPlayerRef.current.mute();
+                          if (ytPlayerRef.current.playVideo) ytPlayerRef.current.playVideo();
+                      }
+                  }
+              } catch (e) {}
+
               // 캡처하는 찰나의 순간 노란 점선 박스와 안내 문구를 완전히 숨김!
               if (cropOverlayRef.current) {
                   cropOverlayRef.current.style.opacity = '0';
               }
-              // 화면에서 노란 박스가 사라지고 비디오 프레임에 반영될 때까지 2프레임(약 50ms) 대기
-              await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 40))));
+
+              // 일시정지 아이콘(||)이 페이드아웃되어 사라질 수 있도록 대기 (일시정지였으면 320ms, 이미 재생 중이었으면 60ms)
+              const waitMs = wasPausedBeforeCapture ? 320 : 60;
+              await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, waitMs))));
 
               const scaleX = capVideo.videoWidth / window.innerWidth;
               const scaleY = capVideo.videoHeight / window.innerHeight;
@@ -1148,6 +1322,14 @@
               // 캡처 완료 즉시 노란 가이드 박스 다시 복구
               if (cropOverlayRef.current) {
                   cropOverlayRef.current.style.opacity = '1';
+              }
+
+              // 원래 일시정지 상태였다면 다시 제자리에 멈춰두고 볼륨 복구
+              if (wasPausedBeforeCapture && ytPlayerRef.current) {
+                  try {
+                      if (ytPlayerRef.current.pauseVideo) ytPlayerRef.current.pauseVideo();
+                      if (!wasMutedBeforeCapture && ytPlayerRef.current.unMute) ytPlayerRef.current.unMute();
+                  } catch (e) {}
               }
 
               return canvas.toDataURL('image/jpeg', 0.88);
@@ -1263,10 +1445,18 @@
               }
 
               const formattedTime = formatSecondsToTime(Math.max(0, liveSec));
+              // 현재 재생 중인 유튜브 영상 ID가 있다면 그 상품의 고유 영상 주소로 함께 기록! (나중에 전체 방송 주소가 바뀌어도 이 상품은 자기 영상을 기억함)
+              const currentPlayingYtId = (activeVideo && activeVideo.type === 'youtube' && activeVideo.videoId)
+                  ? activeVideo.videoId
+                  : globalYoutubeId;
+
               const updates = {
                   videoTime: formattedTime,
                   videoDisabled: null
               };
+              if (currentPlayingYtId) {
+                  updates.videoUrl = `https://www.youtube.com/watch?v=${currentPlayingYtId}`;
+              }
 
               let capturedBase64 = null;
               if (withAutoCapture) {
@@ -1299,10 +1489,17 @@
               }
 
               if (formattedTime) {
-                  db.ref(`ember_live_data/${group.id}`).update({
+                  const pinUpdates = {
                       videoTime: formattedTime,
                       videoDisabled: null
-                  });
+                  };
+                  const currentPlayingYtId = (activeVideo && activeVideo.type === 'youtube' && activeVideo.videoId)
+                      ? activeVideo.videoId
+                      : globalYoutubeId;
+                  if (currentPlayingYtId) {
+                      pinUpdates.videoUrl = `https://www.youtube.com/watch?v=${currentPlayingYtId}`;
+                  }
+                  db.ref(`ember_live_data/${group.id}`).update(pinUpdates);
               }
 
               db.ref('ember_live_data/_global_config/currentPinnedId').set(
@@ -1502,8 +1699,10 @@
               groupedProducts.forEach(group => {
                   const { data: override } = findMatchingFirebaseEntry(group, firebaseData);
                   const isVideoDisabled = Boolean(override.videoDisabled);
-                  const ytId = isVideoDisabled ? null : (extractYouTubeId(override.videoUrl) || globalYoutubeId);
-                  const videoTime = !isVideoDisabled ? (override.videoTime || group.sheetVideoCol || '') : '';
+                  const customYtId = extractYouTubeId(override.videoUrl) || extractYouTubeId(group.sheetVideoCol);
+                  const targetYtId = isVideoDisabled ? null : (customYtId || globalYoutubeId);
+                  const ytId = (targetYtId && !unavailableYtIds[targetYtId]) ? targetYtId : null;
+                  const videoTime = (!isVideoDisabled && ytId) ? (override.videoTime || extractTimeFromUrl(group.sheetVideoCol) || (!customYtId ? group.sheetVideoCol : '') || '') : '';
                   const note = override.note || '';
                   const optsText = group.options.map(o => o.isSoldOut ? `<span class="sold-out">${o.displayName}(품절)</span>` : o.displayName).join(', ');
                   
@@ -1557,22 +1756,54 @@
               return groupedProducts.map(group => {
                   const { data: override } = findMatchingFirebaseEntry(group, firebaseData);
                   const isVideoDisabled = Boolean(override.videoDisabled);
-                  const customVideoUrl = !isVideoDisabled ? (override.videoUrl || '') : '';
-                  const ytId = !isVideoDisabled ? (extractYouTubeId(customVideoUrl) || globalYoutubeId) : null;
-                  const rawVideoTime = !isVideoDisabled ? (override.videoTime !== undefined ? override.videoTime : (group.sheetVideoCol || '')) : '';
+                  
+                  // 1) 상품별 개별 영상 주소 (관리자 설정값 우선, 없으면 시트 D열에서 링크 추출)
+                  const sheetRaw = group.sheetVideoCol || '';
+                  const sheetYtId = extractYouTubeId(sheetRaw);
+                  const customVideoUrl = !isVideoDisabled ? (override.videoUrl || (sheetYtId ? sheetRaw : '')) : '';
+                  const customYtId = extractYouTubeId(customVideoUrl);
+
+                  // 2) 시작 시간 추출 (관리자 설정 시간 우선 -> 시트 링크 내 t= 파라미터 -> 시트 텍스트 시간)
+                  const rawVideoTime = !isVideoDisabled 
+                      ? (override.videoTime !== undefined && override.videoTime !== '' 
+                          ? override.videoTime 
+                          : (extractTimeFromUrl(customVideoUrl) || (!sheetYtId ? sheetRaw : ''))) 
+                      : '';
                   const parsedSec = parseTimeToSeconds(rawVideoTime);
-                  const cleanTimeStr = parsedSec !== null && rawVideoTime !== '' ? formatSecondsToTime(parsedSec) : '';
-                  const hasVideo = !isVideoDisabled && Boolean(ytId || customVideoUrl);
+                  const cleanTimeStr = parsedSec !== null && String(rawVideoTime).trim() !== '' ? formatSecondsToTime(parsedSec) : '';
+
+                  // 3) 상품별 개별 생사 판별!
+                  // - 이 상품에 개별 유튜브 ID(customYtId)가 지정되어 있으면: 오직 '그 영상'이 살아있는지만 본다! (전체 방송 영상이 죽었어도 이 상품 영상이 살아있으면 재생 가능, 반대로 이 상품 영상이 죽었으면 전체 영상으로 넘어가지 않고 즉시 사진 전용으로 전환!)
+                  // - 개별 유튜브 ID가 없고 시간(cleanTimeStr)만 찍혀 있는 상품이면: 전체 방송 영상(rawGlobalYoutubeId)이 살아있는지 확인한다!
+                  let candidateYtId = null;
+                  if (!isVideoDisabled) {
+                      if (customYtId) {
+                          candidateYtId = customYtId;
+                      } else if (cleanTimeStr && rawGlobalYoutubeId) {
+                          candidateYtId = rawGlobalYoutubeId;
+                      }
+                  }
+
+                  const isThisProductVideoDead = Boolean(candidateYtId && unavailableYtIds[candidateYtId]);
+                  const activeYtId = (candidateYtId && !isThisProductVideoDead) ? candidateYtId : null;
+
+                  // 유튜브가 아닌 직접 입력한 .mp4 영상인지 확인
+                  const isDirectMp4 = Boolean(!isVideoDisabled && customVideoUrl && !customYtId && customVideoUrl.includes('http'));
+
+                  // 최종적으로 이 상품의 영상이 실제로 살아있을 때만 hasVideo = true!
+                  const hasVideo = !isVideoDisabled && Boolean(activeYtId || isDirectMp4);
 
                   return {
                       ...group,
                       imageUrl: override.image || null,
-                      AutoThumbUrl: ytId ? `https://img.youtube.com/vi/${ytId}/mqdefault.jpg` : null,
+                      // 직접 캡처한 사진이 없고 영상이 살아있을 때만 유튜브 썸네일 사용
+                      AutoThumbUrl: activeYtId ? `https://img.youtube.com/vi/${activeYtId}/mqdefault.jpg` : null,
                       note: override.note || '',
                       videoTime: cleanTimeStr,
-                      videoUrl: customVideoUrl,
-                      ytId: ytId,
+                      videoUrl: isDirectMp4 ? customVideoUrl : '',
+                      ytId: activeYtId,
                       hasVideo: hasVideo,
+                      isVideoDead: isThisProductVideoDead,
                       videoDisabled: isVideoDisabled
                   };
               }).filter(g => 
@@ -1580,7 +1811,7 @@
                   g.name.toLowerCase().includes(q) || 
                   g.options.some(o => o.originalName.toLowerCase().includes(q))
               );
-          }, [groupedProducts, firebaseData, searchTerm, globalYoutubeId, isStoreClosed, isAdmin, activeTab]);
+          }, [groupedProducts, firebaseData, searchTerm, rawGlobalYoutubeId, unavailableYtIds, isStoreClosed, isAdmin, activeTab]);
 
           const handlePlayProductVideo = useCallback((group) => {
               if (playerLayout === 'minimized') setPlayerLayout('floating');
@@ -1768,6 +1999,7 @@
                                             isLive={activeVideo.isLive}
                                             playKey={activeVideo.playKey}
                                             onTimeUpdate={setCurrentPlayerSec}
+                                            onVideoUnavailable={handleVideoUnavailable}
                                             playerRef={ytPlayerRef}
                                         />
                                     ) : (
@@ -1861,6 +2093,8 @@
                                           <span className="text-[10px] font-extrabold text-red-300 bg-red-950/90 px-1.5 py-0.5 rounded border border-red-500/40 shrink-0">
                                               🔒 마감됨
                                           </span>
+                                      ) : isGlobalVideoPrivate ? (
+                                          <span className="text-[10px] text-amber-300 font-bold truncate">🔒 영상 비공개됨 (사진전용 자동전환)</span>
                                       ) : globalYoutubeId ? (
                                           <span className="text-[10px] text-emerald-400 font-bold truncate">● 유튜브 연동됨</span>
                                       ) : (
@@ -1893,7 +2127,7 @@
                                               <label className="block text-[11px] font-bold text-slate-300">
                                                   유튜브 실시간 스트리밍 / 다시보기 주소
                                               </label>
-                                              {globalYoutubeUrl && (
+                                              {rawGlobalYoutubeUrl && (
                                                   <button 
                                                       onClick={handleClearGlobalYoutube}
                                                       className="text-[10px] font-bold text-slate-400 hover:text-red-400 underline"
@@ -2059,7 +2293,10 @@
                                                             <span className="text-[10px] font-bold text-slate-600">영상 보기</span>
                                                         </>
                                                     ) : (
-                                                        <svg className="w-8 h-8 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                                                        <div className="flex flex-col items-center justify-center text-slate-300">
+                                                            <svg className="w-7 h-7 opacity-50 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                                                            <span className="text-[9px] font-bold text-slate-400">사진 준비중</span>
+                                                        </div>
                                                     )}
                                                 </div>
                                             )}
@@ -2181,6 +2418,11 @@
                                                         >
                                                             ✕삭제
                                                         </button>
+                                                    )}
+                                                    {group.isVideoDead && (
+                                                        <span className="px-1.5 py-0.5 bg-slate-100 text-slate-500 border border-slate-300 rounded text-[9px] font-bold shrink-0" title="이 상품에 연결된 유튜브 영상이 비공개/삭제되어 고객에게 사진만 표시됩니다">
+                                                            🔒영상비공개(사진전용)
+                                                        </span>
                                                     )}
                                                     <button
                                                         type="button"
@@ -2326,11 +2568,18 @@
                                 )}
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
-                                {isAutoCaptureReady && (
-                                    <span className="text-[10px] text-emerald-400 font-bold bg-emerald-950/90 px-2 py-0.5 rounded border border-emerald-600/40">
-                                        ● 자동캡처 준비됨
-                                    </span>
-                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => setHideYoutubeUi(prev => !prev)}
+                                    className={`px-2 py-1 rounded text-[11px] font-extrabold transition border ${
+                                        hideYoutubeUi
+                                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                                    }`}
+                                    title="켜두면 영상 안의 유튜브 빨간 하단 바와 아이콘을 숨겨서 사진이 깨끗하게 찍힙니다!"
+                                >
+                                    {hideYoutubeUi ? '✨ 클린화면 ON (하단바 숨김)' : '유튜브 기본바 표시중'}
+                                </button>
                                 <button
                                     type="button"
                                     onClick={() => setShowLiveChat(prev => !prev)}
@@ -2389,8 +2638,12 @@
                                                     videoId={activeVideo ? activeVideo.videoId : globalYoutubeId}
                                                     startSeconds={activeVideo ? activeVideo.startSeconds : 0}
                                                     isLive={activeVideo ? activeVideo.isLive : Boolean(liveStartTimestamp)}
-                                                    playKey={activeVideo ? activeVideo.playKey : 'default_studio'}
+                                                    playKey={`${activeVideo ? activeVideo.playKey : 'default_studio'}_${hideYoutubeUi ? 'clean' : 'ui'}`}
+                                                    hideControls={hideYoutubeUi}
                                                     onTimeUpdate={setCurrentPlayerSec}
+                                                    onDurationChange={setPlayerDuration}
+                                                    onStateChange={setIsPlayerPlaying}
+                                                    onVideoUnavailable={handleVideoUnavailable}
                                                     playerRef={ytPlayerRef}
                                                 />
                                             ) : (
@@ -2398,12 +2651,15 @@
                                                     ref={html5VideoRef}
                                                     key={`${activeVideo.url}_${activeVideo.playKey}`}
                                                     src={activeVideo.url}
-                                                    controls
+                                                    controls={!hideYoutubeUi}
                                                     autoPlay
                                                     playsInline
                                                     onLoadedMetadata={(e) => {
                                                         if (activeVideo.startSeconds > 0) {
                                                             e.target.currentTime = activeVideo.startSeconds;
+                                                        }
+                                                        if (e.target.duration) {
+                                                            setPlayerDuration(Math.floor(e.target.duration));
                                                         }
                                                     }}
                                                     onTimeUpdate={(e) => {
@@ -2412,6 +2668,16 @@
                                                     className="w-full h-full object-contain"
                                                 />
                                             )}
+
+                                            {/* 클린화면 ON 상태일 때 사용자가 실수로 유튜브 화면을 직접 클릭해 (||) 아이콘을 띄우지 않도록 보호하면서 클릭 시 깔끔하게 재생/정지해주는 투명 실드 */}
+                                            {hideYoutubeUi && !isInteractiveCrop && (
+                                                <div 
+                                                    onClick={handleTogglePlayPause}
+                                                    title="클릭하여 재생 / 일시정지 (유튜브 빨간 바가 뜨지 않게 보호합니다)"
+                                                    className="absolute inset-0 z-10 cursor-pointer"
+                                                />
+                                            )}
+
                                             {/* 1:1 캡처 영역 가이드 박스 (위치 이동 & 확대/축소 반영, 캡처 순간에는 자동 투명화) */}
                                             <div 
                                                 ref={cropOverlayRef}
@@ -2451,12 +2717,37 @@
 
                                 {/* 하단: 재생바 미세 이동 리모컨 + 1:1 캡처 박스 위치/확대 조절 컨트롤러 */}
                                 <div className="bg-slate-900 border-t border-slate-800 p-3 space-y-2.5 shrink-0">
+                                    {}
+                                    {/* 영상 바깥에 만든 전용 재생 탐색 바 (유튜브 영상 위에 빨간 바가 안 찍히도록 밖으로 뺌!) */}
+                                    <div className="flex items-center gap-2.5 bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
+                                        <button
+                                            type="button"
+                                            onClick={handleTogglePlayPause}
+                                            className="px-2.5 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-extrabold shrink-0 shadow transition"
+                                        >
+                                            {isPlayerPlaying ? '⏸ 일시정지' : '▶ 재생'}
+                                        </button>
+                                        <input
+                                            type="range"
+                                            min="0"
+                                            max={Math.max(playerDuration, currentPlayerSec, 3600)}
+                                            value={currentPlayerSec}
+                                            onChange={(e) => handleSeekToAbsolute(e.target.value)}
+                                            className="flex-1 accent-red-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                                            title="이 슬라이더를 움직여 원하는 시간으로 이동하면 영상 안에 빨간 바가 전혀 안 찍힙니다!"
+                                        />
+                                        <span className="text-[11px] font-mono font-bold text-amber-300 shrink-0">
+                                            {formatSecondsToTime(currentPlayerSec)}
+                                            {playerDuration > 0 ? ` / ${formatSecondsToTime(playerDuration)}` : ''}
+                                        </span>
+                                    </div>
+
                                     {/* 재생 시간 미세 이동 버튼 */}
                                     <div className="flex items-center justify-between gap-2">
-                                        <span className="text-xs font-extrabold text-amber-300">
-                                            ⏱️ 현재 장면: {currentPlayerSec > 0 ? formatSecondsToTime(currentPlayerSec) : '00:00'}
+                                        <span className="text-[11px] text-slate-400">
+                                            💡 아래 슬라이더와 버튼으로 장면을 맞추면 화면에 빨간 바나 정지 아이콘이 안 뜹니다!
                                         </span>
-                                        <div className="flex items-center gap-1">
+                                        <div className="flex items-center gap-1 shrink-0">
                                             <button onClick={() => handleSeekRelative(-10)} className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-xs font-bold border border-slate-700">-10초</button>
                                             <button onClick={() => handleSeekRelative(-5)} className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-xs font-bold border border-slate-700">-5초</button>
                                             <button onClick={() => handleSeekRelative(-1)} className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded text-xs font-bold border border-slate-700">-1초</button>
