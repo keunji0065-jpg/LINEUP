@@ -2614,17 +2614,34 @@
                                     {currentStudioVideoId ? (
                                         <div 
                                             style={{ backgroundColor: chatDarkBg ? '#0f0f0f' : '#ffffff', colorScheme: chatDarkBg ? 'dark' : 'light' }}
-                                            className="flex-1 relative flex flex-col transition-colors"
+                                            className="flex-1 relative flex flex-col transition-colors overflow-hidden"
                                         >
-                                            <iframe
-                                                key={`chat_${currentStudioVideoId}_${embedDomain}_${chatDarkBg ? 'dark' : 'light'}`}
-                                                src={`https://www.youtube.com/live_chat?v=${currentStudioVideoId}&embed_domain=${embedDomain}&dark_theme=${chatDarkBg ? 1 : 0}`}
-                                                style={{ backgroundColor: chatDarkBg ? '#0f0f0f' : '#ffffff', colorScheme: chatDarkBg ? 'dark' : 'light' }}
-                                                className="w-full flex-1 border-0"
-                                                title="YouTube Live Chat"
-                                            />
-                                            <div className="bg-slate-950 px-2.5 py-1.5 text-[10px] text-slate-400 border-t border-slate-800 leading-tight">
-                                                💡 <b>팁:</b> 만약 글씨가 어두워서 안 보이면 상단 <b>[🌙 검정바탕 / ☀️ 흰바탕]</b> 버튼을 눌러 바탕색을 반전시켜 보세요!
+                                            {}
+                                            {(() => {
+                                                // 유튜브 채팅이 깨지지 않고 가장 예쁘게 나오는 기준 폭(320px)
+                                                const baseChatWidth = 320;
+                                                const chatScale = chatWidth < baseChatWidth ? (chatWidth / baseChatWidth) : 1;
+                                                return (
+                                                    <div className="flex-1 relative w-full h-full overflow-hidden">
+                                                        <iframe
+                                                            key={`chat_${currentStudioVideoId}_${embedDomain}_${chatDarkBg ? 'dark' : 'light'}`}
+                                                            src={`https://www.youtube.com/live_chat?v=${currentStudioVideoId}&embed_domain=${embedDomain}&dark_theme=${chatDarkBg ? 1 : 0}`}
+                                                            style={{ 
+                                                                backgroundColor: chatDarkBg ? '#0f0f0f' : '#ffffff', 
+                                                                colorScheme: chatDarkBg ? 'dark' : 'light',
+                                                                width: chatScale < 1 ? `${baseChatWidth}px` : '100%',
+                                                                height: chatScale < 1 ? `${100 / chatScale}%` : '100%',
+                                                                transform: chatScale < 1 ? `scale(${chatScale})` : 'none',
+                                                                transformOrigin: 'top left'
+                                                            }}
+                                                            className="border-0 block"
+                                                            title="YouTube Live Chat"
+                                                        />
+                                                    </div>
+                                                );
+                                            })()}
+                                            <div className="bg-slate-950 px-2 py-1 text-[9px] text-slate-400 border-t border-slate-800 leading-tight shrink-0">
+                                                💡 글씨가 안 보이면 상단 <b>[🌙/☀️]</b> 버튼으로 배경색 반전!
                                             </div>
                                         </div>
                                     ) : (
