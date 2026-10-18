@@ -264,22 +264,32 @@
             return <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>;
         };
 
-        // 유튜브 재생바(스크롤) 위치를 실시간으로 읽어오는 스마트 플레이어 컴포넌트 (스튜디오 클린 모드 지원)
+        // 유튜브 재생바(스크롤) 위치를 실시간으로 읽어오는 스마트 플레이어 컴포넌트 (React DOM 충돌 방지 래퍼 적용)
         const SmartYouTubePlayer = ({ videoId, startSeconds, isLive, playKey, hideControls = false, onTimeUpdate, onDurationChange, onStateChange, onVideoUnavailable, playerRef }) => {
-            const containerId = useRef(`yt-player-${Math.random().toString(36).substring(2, 9)}`);
+            const wrapperRef = useRef(null);
 
             useEffect(() => {
                 let playerInstance = null;
                 let timeCheckInterval = null;
                 let isUnmounted = false;
 
+                const wrapperEl = wrapperRef.current;
+                if (!wrapperEl) return;
+
+                // React가 관리하는 wrapper 내부를 비우고, YouTube API가 iframe으로 교체할 전용 자식 div를 동적 생성
+                wrapperEl.innerHTML = '';
+                const targetDiv = document.createElement('div');
+                targetDiv.style.width = '100%';
+                targetDiv.style.height = '100%';
+                wrapperEl.appendChild(targetDiv);
+
                 const createPlayer = () => {
-                    if (isUnmounted || !window.YT || !window.YT.Player) return;
-                    const el = document.getElementById(containerId.current);
-                    if (!el) return;
+                    if (isUnmounted || !window.YT || !window.YT.Player || !wrapperRef.current) return;
 
                     try {
-                        playerInstance = new window.YT.Player(containerId.current, {
+                        playerInstance = new window.YT.Player(targetDiv, {
+                            width: '100%',
+                            height: '100%',
                             videoId: videoId,
                             playerVars: {
                                 autoplay: 1,
@@ -294,6 +304,7 @@
                             },
                             events: {
                                 onReady: (event) => {
+                                    if (isUnmounted) return;
                                     if (playerRef) playerRef.current = event.target;
                                     if (!isLive && startSeconds > 0 && event.target.seekTo) {
                                         event.target.seekTo(startSeconds, true);
@@ -318,6 +329,7 @@
                                     }, 350);
                                 },
                                 onStateChange: (event) => {
+                                    if (isUnmounted) return;
                                     if (onStateChange) {
                                         // 1 === YT.PlayerState.PLAYING
                                         onStateChange(event.data === 1);
@@ -328,6 +340,7 @@
                                     }
                                 },
                                 onError: (event) => {
+                                    if (isUnmounted) return;
                                     // 에러 코드 100(삭제/비공개), 101/150(임베드 차단 또는 비공개) 발생 시 즉시 비공개 처리
                                     if (onVideoUnavailable) {
                                         onVideoUnavailable(videoId);
@@ -357,10 +370,13 @@
                     if (playerInstance && typeof playerInstance.destroy === 'function') {
                         try { playerInstance.destroy(); } catch (e) {}
                     }
+                    if (wrapperEl) {
+                        try { wrapperEl.innerHTML = ''; } catch (e) {}
+                    }
                 };
             }, [videoId, startSeconds, isLive, playKey, hideControls]);
 
-            return <div id={containerId.current} className="w-full h-full"></div>;
+            return <div ref={wrapperRef} className="w-full h-full"></div>;
         };
 
         const MediaEditorModal = ({ product, globalYoutubeUrl, liveStartTimestamp, currentData, currentPlayerSec, onClose, onSaveImage, onSaveVideoInfo, onNotify }) => {
