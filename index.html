@@ -998,7 +998,7 @@
           const rawGlobalYoutubeUrl = firebaseData._global_config?.youtubeUrl || "";
           const rawGlobalYoutubeId = extractYouTubeId(rawGlobalYoutubeUrl);
 
-          // 유튜브 영상 ID별로 공개/비공개(삭제) 여부를 2중(oEmbed + 썸네일 해상도)으로 정밀 판별하는 함수
+          // 유튜브 영상 ID별로 공개/비공개(삭제) 여부를 CORS 차단 없이 정확하게 판별하는 함수
           const checkYouTubeVideoPublic = useCallback((ytId) => {
               if (!ytId) return;
 
@@ -1014,28 +1014,29 @@
                   });
               };
 
-              // 1차: 유튜브 썸네일(mqdefault: 정상 320x180, 비공개/삭제 시 120x90 기본 회색 이미지 반환) 즉시 검사
-              const img = new Image();
-              img.onload = () => {
-                  if (img.naturalWidth > 0 && img.naturalWidth <= 120) {
-                      markUnavailable();
-                  } else {
-                      // 2차: oEmbed로 임베드 가능 여부 및 비공개 상태 최종 확인
-                      fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${ytId}&format=json`)
-                          .then(res => {
-                              if (!res.ok) markUnavailable();
-                              else markAvailable();
-                          })
-                          .catch(() => {
-                              // 네트워크/CORS 이슈 시 썸네일이 정상이면 살아있는 것으로 유지
-                              markAvailable();
-                          });
-                  }
-              };
-              img.onerror = () => {
-                  markUnavailable();
-              };
-              img.src = `https://img.youtube.com/vi/${ytId}/mqdefault.jpg`;
+              // 1차: CORS를 공식 지원하는 noembed API로 유튜브 영상의 실제 공개/비공개/삭제 상태 정밀 조회
+              fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${ytId}`)
+                  .then(res => res.json())
+                  .then(data => {
+                      if (data.error || !data.title) {
+                          markUnavailable();
+                      } else {
+                          markAvailable();
+                      }
+                  })
+                  .catch(() => {
+                      // 2차 폴백: 썸네일 로드 및 해상도 체크 (캐시 우회 파라미터 포함)
+                      const img = new Image();
+                      img.onload = () => {
+                          if (img.naturalWidth > 0 && img.naturalWidth <= 120) {
+                              markUnavailable();
+                          }
+                      };
+                      img.onerror = () => {
+                          markUnavailable();
+                      };
+                      img.src = `https://img.youtube.com/vi/${ytId}/mqdefault.jpg?t=${Math.floor(Date.now() / 60000)}`;
+                  });
           }, []);
 
           // 전체 유튜브 ID 및 각 상품별로 등록된 모든 개별 유튜브 ID들을 수집하여 상품별로 생사 판별!
@@ -1071,6 +1072,7 @@
           const liveStartTimestamp = firebaseData._global_config?.liveStartTimestamp || null;
           const currentPinnedId = firebaseData._global_config?.currentPinnedId || null;
           const isStoreClosed = Boolean(firebaseData._global_config?.isStoreClosed);
+          const isPhotoOnlyMode = Boolean(firebaseData._global_config?.isPhotoOnlyMode);
 
           // 플레이어 재생 중 비공개/오류 발생 시 즉시 닫고 해당 상품 사진이 있으면 사진을 띄워줌
           const handleVideoUnavailable = useCallback((badYtId) => {
@@ -1115,6 +1117,22 @@
                       showToast("🟢 판매 오픈! 최신 구글 시트 상품을 다시 불러옵니다.");
                   });
               }
+          };
+
+          const handleTogglePhotoOnlyMode = (e) => {
+              if (e) e.stopPropagation();
+              const nextState = !isPhotoOnlyMode;
+              if (nextState) {
+                  setActiveVideo(null);
+              }
+              db.ref('ember_live_data/_global_config').update({
+                  isPhotoOnlyMode: nextState,
+                  currentPinnedId: nextState ? null : currentPinnedId
+              }).then(() => {
+                  showToast(nextState 
+                      ? "📸 [사진 전용 모드] 켜짐! 모든 고객에게 영상 없이 사진만 깔끔하게 표시됩니다." 
+                      : "🎬 [영상+사진 모드] 켜짐! 다시 상품별 방송 영상이 함께 재생됩니다.");
+              });
           };
 
           const handleStartLiveTimer = () => {
@@ -1806,14 +1824,14 @@
                   // 유튜브가 아닌 직접 입력한 .mp4 영상인지 확인
                   const isDirectMp4 = Boolean(!isVideoDisabled && customVideoUrl && !customYtId && customVideoUrl.includes('http'));
 
-                  // 최종적으로 이 상품의 영상이 실제로 살아있을 때만 hasVideo = true!
-                  const hasVideo = !isVideoDisabled && Boolean(activeYtId || isDirectMp4);
+                  // 최종적으로 사진전용 모드가 아니고, 이 상품의 영상이 실제로 살아있을 때만 hasVideo = true!
+                  const hasVideo = !isPhotoOnlyMode && !isVideoDisabled && Boolean(activeYtId || isDirectMp4);
 
                   return {
                       ...group,
                       imageUrl: override.image || null,
                       // 직접 캡처한 사진이 없고 영상이 살아있을 때만 유튜브 썸네일 사용
-                      AutoThumbUrl: activeYtId ? `https://img.youtube.com/vi/${activeYtId}/mqdefault.jpg` : null,
+                      AutoThumbUrl: (!isPhotoOnlyMode && activeYtId) ? `https://img.youtube.com/vi/${activeYtId}/mqdefault.jpg` : null,
                       note: override.note || '',
                       videoTime: cleanTimeStr,
                       videoUrl: isDirectMp4 ? customVideoUrl : '',
@@ -1827,7 +1845,7 @@
                   g.name.toLowerCase().includes(q) || 
                   g.options.some(o => o.originalName.toLowerCase().includes(q))
               );
-          }, [groupedProducts, firebaseData, searchTerm, rawGlobalYoutubeId, unavailableYtIds, isStoreClosed, isAdmin, activeTab]);
+          }, [groupedProducts, firebaseData, searchTerm, rawGlobalYoutubeId, unavailableYtIds, isStoreClosed, isPhotoOnlyMode, isAdmin, activeTab]);
 
           const handlePlayProductVideo = useCallback((group) => {
               if (playerLayout === 'minimized') setPlayerLayout('floating');
@@ -1884,7 +1902,7 @@
                 
                 {/* 상단 헤더 */}
                 <header className="py-2.5 bg-black flex-shrink-0 z-20 relative flex items-center justify-center px-3">
-                  {globalYoutubeId && !isStoreClosed && (
+                  {globalYoutubeId && !isStoreClosed && !isPhotoOnlyMode && (
                     <button 
                         onClick={() => {
                             if (playerLayout === 'minimized') setPlayerLayout('floating');
@@ -2109,6 +2127,8 @@
                                           <span className="text-[10px] font-extrabold text-red-300 bg-red-950/90 px-1.5 py-0.5 rounded border border-red-500/40 shrink-0">
                                               🔒 마감됨
                                           </span>
+                                      ) : isPhotoOnlyMode ? (
+                                          <span className="text-[10px] text-amber-300 font-bold truncate">📸 사진만 표시중 (영상숨김)</span>
                                       ) : isGlobalVideoPrivate ? (
                                           <span className="text-[10px] text-amber-300 font-bold truncate">🔒 영상 비공개됨 (사진전용 자동전환)</span>
                                       ) : globalYoutubeId ? (
@@ -2118,6 +2138,18 @@
                                       )}
                                   </div>
                                   <div className="flex items-center gap-1 shrink-0">
+                                      <button
+                                          type="button"
+                                          onClick={handleTogglePhotoOnlyMode}
+                                          className={`px-2 py-0.5 rounded text-[10px] font-extrabold border transition ${
+                                              isPhotoOnlyMode
+                                                  ? 'bg-amber-400 hover:bg-amber-300 text-black border-amber-300'
+                                                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600'
+                                          }`}
+                                          title="지난 방송이 끝났을 때 누르면 모든 영상 재생버튼을 숨기고 캡처해둔 사진만 깔끔하게 보여줍니다!"
+                                      >
+                                          {isPhotoOnlyMode ? '📸 사진전용 ON' : '🎬 영상켜짐'}
+                                      </button>
                                       <button
                                           type="button"
                                           onClick={handleToggleStoreClosed}
