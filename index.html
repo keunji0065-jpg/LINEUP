@@ -729,7 +729,8 @@
 
           const maxKnownOptionsCount = useRef(0);
           const isAdminRef = useRef(false);
-          const isStoreClosedRef = useRef(false);
+          const isStoreClosedRef = useRef(true);
+          const isConfigLoadedRef = useRef(false);
           const lastFirebaseCatalogTimeRef = useRef(0);
 
           useEffect(() => {
@@ -842,7 +843,17 @@
           }, []);
 
           const fetchSheetData = useCallback(async (isManualRefresh = false) => {
-              if (isStoreClosedRef.current && !isManualRefresh) {
+              if (!isConfigLoadedRef.current) {
+                  try {
+                      const cfgSnap = await db.ref('ember_live_data/_global_config').once('value');
+                      const cfgVal = cfgSnap.val() || {};
+                      const closedCheck = Boolean(cfgVal.catalogClosedLock !== undefined ? cfgVal.catalogClosedLock : cfgVal.isStoreClosed);
+                      isStoreClosedRef.current = closedCheck;
+                      isConfigLoadedRef.current = true;
+                  } catch (e) {}
+              }
+              if (isStoreClosedRef.current && !isAdminRef.current) {
+                  setGroupedProducts([]);
                   setIsInitialLoad(false);
                   setIsRefreshing(false);
                   return;
@@ -1001,8 +1012,13 @@
                   if (val._global_config?.youtubeUrl !== undefined) {
                       setGlobalYoutubeInput(val._global_config.youtubeUrl);
                   }
-                  const closedNow = Boolean(val._global_config?.isStoreClosed);
+                  const closedNow = Boolean(
+                      val._global_config?.catalogClosedLock !== undefined
+                          ? val._global_config.catalogClosedLock
+                          : val._global_config?.isStoreClosed
+                  );
                   isStoreClosedRef.current = closedNow;
+                  isConfigLoadedRef.current = true;
 
                   if (closedNow) {
                       setSelectedOptions([]);
@@ -1102,7 +1118,11 @@
           const globalYoutubeId = isGlobalVideoPrivate ? null : rawGlobalYoutubeId;
           const liveStartTimestamp = firebaseData._global_config?.liveStartTimestamp || null;
           const currentPinnedId = firebaseData._global_config?.currentPinnedId || null;
-          const isStoreClosed = Boolean(firebaseData._global_config?.isStoreClosed);
+          const isStoreClosed = Boolean(
+              firebaseData._global_config?.catalogClosedLock !== undefined
+                  ? firebaseData._global_config.catalogClosedLock
+                  : firebaseData._global_config?.isStoreClosed
+          );
           const isPhotoOnlyMode = Boolean(firebaseData._global_config?.isPhotoOnlyMode);
 
           const handleVideoUnavailable = useCallback((badYtId) => {
@@ -1126,19 +1146,25 @@
               if (e) e.stopPropagation();
               const nextState = !isStoreClosed;
               isStoreClosedRef.current = nextState;
+              isConfigLoadedRef.current = true;
 
               if (nextState) {
                   setActiveVideo(null);
                   setSelectedOptions([]);
+                  if (!isAdminRef.current) {
+                      setGroupedProducts([]);
+                  }
                   db.ref('ember_live_data').update({
+                      '_global_config/catalogClosedLock': true,
                       '_global_config/isStoreClosed': true,
                       '_global_config/currentPinnedId': null,
                       '_live_catalog': { items: [], updatedAt: Date.now() }
                   }).then(() => {
-                      showToast("🔒 판매 마감! 모든 고객 화면에서 상품이 영구 숨김 처리되었습니다.");
+                      showToast("🔒 판매 마감! 다시 [판매오픈]을 누르기 전까지 고객 화면이 영구 잠금됩니다.");
                   });
               } else {
                   db.ref('ember_live_data/_global_config').update({
+                      catalogClosedLock: false,
                       isStoreClosed: false
                   }).then(() => {
                       maxKnownOptionsCount.current = 0;
@@ -1562,19 +1588,26 @@
                   localStorage.removeItem('ember_grouped_cache_v1');
                   localStorage.removeItem('ember_cart_v3');
               } catch (e) {}
-              db.ref('ember_live_data').set({
-                  _global_config: {
+              const updates = {
+                  '_global_config': {
+                      catalogClosedLock: keepClosed,
                       isStoreClosed: keepClosed
                   },
-                  _live_catalog: {
+                  '_live_catalog': {
                       items: [],
                       updatedAt: Date.now()
                   }
-              }).then(() => {
+              };
+              Object.keys(firebaseData || {}).forEach(k => {
+                  if (!k.startsWith('_portal_') && k !== '_global_config' && k !== '_live_catalog') {
+                      updates[k] = null;
+                  }
+              });
+              db.ref('ember_live_data').update(updates).then(() => {
                   if (!keepClosed) {
                       fetchSheetData(true);
                   }
-                  showToast("🧹 이전 방송 데이터 및 캐시가 모두 초기화되었습니다!");
+                  showToast("🧹 이전 방송 미디어 및 캐시가 초기화되었습니다! (고객 포털 데이터 보존)");
               });
           };
 
