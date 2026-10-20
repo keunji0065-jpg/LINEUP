@@ -737,10 +737,24 @@
           }, [isAdmin]);
 
           const parseRawItemsToGroups = useCallback((validRows) => {
+              // 상품명에서 고유 그룹 키 추출 (예: "01 코트" -> "01", "E 85-1 귀걸이" -> "E 85-1_39000", "N 52 목걸이" -> "N 52_45000")
+              const extractItemGroupKey = (name, price) => {
+                  const trimmed = String(name || '').trim();
+                  // 1) 숫자로 시작하는 경우: "85-1 ...", "01 ..."
+                  const numStart = trimmed.match(/^(\d+(?:-\d+)?)/);
+                  if (numStart) return `${numStart[1]}_${price}`;
+                  // 2) 영문코드 + 공백 + 숫자로 시작하는 경우: "E 85-1 ...", "N 52 ...", "A-102 ..."
+                  const prefixNum = trimmed.match(/^([a-zA-Z]+\s*\d+(?:-\d+)?)/);
+                  if (prefixNum) return `${prefixNum[1].replace(/\s+/g, '').toUpperCase()}_${price}`;
+                  // 3) 그 외 일반 상품명: 앞 2단어 + 가격 기준
+                  const words = trimmed.split(/\s+/);
+                  const baseKey = words.length >= 2 ? `${words[0]}_${words[1]}` : words[0];
+                  return `${baseKey}_${price}`;
+              };
+
               const groupMap = {};
               validRows.forEach(row => {
-                  const numMatch = row.originalName.match(/^([0-9]+(?:-[0-9]+)?)/);
-                  const groupKey = numMatch ? numMatch[1] : row.originalName.split(/\s+/)[0];
+                  const groupKey = extractItemGroupKey(row.originalName, row.numericPrice);
                   if (!groupMap[groupKey]) groupMap[groupKey] = [];
                   groupMap[groupKey].push(row);
               });
@@ -773,9 +787,29 @@
                       if (splitItems.every(arr => arr[i] === word)) commonWordCount++;
                       else break;
                   }
-                  if (commonWordCount === 0) commonWordCount = 1;
 
-                  const baseName = splitItems[0].slice(0, commonWordCount).join(' ');
+                  // 만약 공통 단어가 아예 없거나 영문 1글자('E', 'N' 등)뿐이라면 억지로 묶지 않고 개별 단품으로 분리!
+                  const commonPrefixStr = splitItems[0].slice(0, commonWordCount).join(' ').trim();
+                  if (commonWordCount === 0 || /^[a-zA-Z]$/.test(commonPrefixStr)) {
+                      items.forEach(singleItem => {
+                          finalGroups.push({
+                              id: getSafeKey(singleItem.originalName),
+                              name: singleItem.originalName,
+                              formattedPrice: singleItem.formattedPrice,
+                              numericPrice: singleItem.numericPrice,
+                              sheetVideoCol: singleItem.sheetVideoCol || '',
+                              options: [{
+                                  originalName: singleItem.originalName,
+                                  displayName: '기본(단품)',
+                                  isSoldOut: singleItem.isSoldOut,
+                                  numericPrice: singleItem.numericPrice
+                              }]
+                          });
+                      });
+                      continue;
+                  }
+
+                  const baseName = commonPrefixStr;
                   const safeKey = getSafeKey(baseName);
                   const options = items.map((item, idx) => ({
                       originalName: item.originalName,
@@ -795,8 +829,8 @@
               }
 
               return finalGroups.sort((a, b) => {
-                  const matchA = a.name.match(/^(\d+)(?:-(\d+))?/);
-                  const matchB = b.name.match(/^(\d+)(?:-(\d+))?/);
+                  const matchA = a.name.match(/^(?:[a-zA-Z]+\s*)?(\d+)(?:-(\d+))?/);
+                  const matchB = b.name.match(/^(?:[a-zA-Z]+\s*)?(\d+)(?:-(\d+))?/);
                   const numA = matchA ? parseInt(matchA[1], 10) : -1;
                   const numB = matchB ? parseInt(matchB[1], 10) : -1;
                   if (numA === -1 && numB === -1) return a.name.localeCompare(b.name);
@@ -813,9 +847,7 @@
                   setIsRefreshing(false);
                   return;
               }
-
-              // 강은지 주문서에서 최근 60초 이내에 Firebase 실시간 직통 푸시가 들어온 상태이고 자동 폴링이라면, 느린 시트 캐시가 최신 데이터를 덮어쓰지 않도록 보호!
-              if (!isManualRefresh && lastFirebaseCatalogTimeRef.current > 0 && (Date.now() - lastFirebaseCatalogTimeRef.current < 60000)) {
+              if (!isManualRefresh && lastFirebaseCatalogTimeRef.current > 0 && (Date.now() - lastFirebaseCatalogTimeRef.current < 15000)) {
                   setIsInitialLoad(false);
                   setIsRefreshing(false);
                   return;
@@ -834,15 +866,17 @@
                     const gasRes = await fetch(`${GAS_URL}?action=get_all&masterId=${MASTER_ID}&t=${Date.now()}`, { cache: 'no-store' });
                     if (gasRes.ok) {
                         const gasJson = await gasRes.json();
-                        if (gasJson && gasJson.status === 'success' && Array.isArray(gasJson.inventory)) {
+                        if (gasJson && (gasJson.status === 'success' || gasJson.success) && Array.isArray(gasJson.inventory)) {
                             loadedFromGas = true;
                             gasJson.inventory.forEach(item => {
-                                const name = String(item.name || '').trim();
-                                const priceNum = parseInt(String(item.price || '0').replace(/[^0-9-]/g, ''), 10);
-                                if (name && !isNaN(priceNum) && priceNum > 0) {
+                                const name = String(item.name || item['상품명'] || item.col_0 || '').trim();
+                                const priceRaw = item.price !== undefined ? item.price : (item['단가'] !== undefined ? item['단가'] : item.col_1);
+                                const priceNum = parseInt(String(priceRaw || '0').replace(/[^0-9-]/g, ''), 10);
+                                const statusStr = String(item.status || item['상태'] || item.col_3 || '').trim();
+                                if (name && name.toLowerCase() !== 'name' && name !== '상품명' && !isNaN(priceNum) && priceNum > 0) {
                                     validRows.push({
                                         originalName: name,
-                                        isSoldOut: String(item.status || '').trim() === '품절',
+                                        isSoldOut: statusStr === '품절' || Boolean(item.isSoldOut),
                                         numericPrice: priceNum,
                                         formattedPrice: priceNum.toLocaleString(),
                                         sheetVideoCol: ''
@@ -853,8 +887,8 @@
                     }
                 } catch (gasErr) {}
 
-                // 2순위 폴백: GAS 통신 실패 시에만 기존 CSV 링크 사용
-                if (!loadedFromGas) {
+                // 2순위 폴백: GAS에서 0건이거나 통신 실패 시에만 기존 CSV 링크 보조 사용
+                if (!loadedFromGas || validRows.length === 0) {
                     const cacheBuster = Date.now();
                     const csvUrl = `https://docs.google.com/spreadsheets/d/e/2PACX-1vRI6cW1MyLv5gbcfsjEyYuMDWdL6jDit_Fuz2ZNXPKwEJZeedXoNorHHhUdsoDnDxBzzrFu6P72WVOy/pub?gid=1797935796&single=true&output=csv&_cb=${cacheBuster}`;
                     const response = await fetch(csvUrl, { cache: 'no-store' });
@@ -906,13 +940,7 @@
                 const currentTotalOptions = validRows.length;
 
                 if (groupArray.length === 0) {
-                    maxKnownOptionsCount.current = 0;
-                    try { localStorage.removeItem('ember_grouped_cache_v1'); } catch (e) {}
-                    setGroupedProducts([]);
-                    setSelectedOptions([]);
-                    if (isAdminRef.current) {
-                        db.ref('ember_live_data/_live_catalog').set({ items: [], updatedAt: Date.now() }).catch(() => {});
-                    }
+                    // 🛡️ 방어막: 시트에서 일시적으로 0건이 읽히더라도 기존에 불러온 라인업(또는 Firebase 미러)이 있다면 절대 지우지 않고 유지합니다!
                     setIsInitialLoad(false);
                     setIsRefreshing(false);
                     return;
@@ -985,18 +1013,24 @@
                       setIsInitialLoad(false);
                   } else if (val._live_catalog !== undefined) {
                       const mirrorItems = Array.isArray(val._live_catalog.items) ? val._live_catalog.items : [];
-                      lastFirebaseCatalogTimeRef.current = val._live_catalog.updatedAt || Date.now();
-                      setGroupedProducts(prev => {
-                          if (JSON.stringify(prev) === JSON.stringify(mirrorItems)) return prev;
-                          return mirrorItems;
-                      });
-                      const allValidOpts = mirrorItems.flatMap(g => (g.options || []).map(o => o.originalName));
-                      setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(name => allValidOpts.includes(name)));
-                      setIsInitialLoad(false);
+                      // 만약 이전에 잘못 묶인 단일 알파벳('E', 'N') 그룹이 미러에 들어있다면 무시하고 시트에서 새로 파싱!
+                      const hasBrokenSingleLetterGroup = mirrorItems.some(g => /^[a-zA-Z]$/.test(String(g.name || '').trim()));
+                      if (mirrorItems.length > 0 && !hasBrokenSingleLetterGroup) {
+                          lastFirebaseCatalogTimeRef.current = val._live_catalog.updatedAt || Date.now();
+                          setGroupedProducts(prev => {
+                              if (JSON.stringify(prev) === JSON.stringify(mirrorItems)) return prev;
+                              return mirrorItems;
+                          });
+                          const allValidOpts = mirrorItems.flatMap(g => (g.options || []).map(o => o.originalName));
+                          setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(name => allValidOpts.includes(name)));
+                          setIsInitialLoad(false);
+                      } else {
+                          fetchSheetData(true);
+                      }
                   }
               });
               return () => ref.off();
-          }, []);
+          }, [fetchSheetData]);
 
           const rawGlobalYoutubeUrl = firebaseData._global_config?.youtubeUrl || "";
           const rawGlobalYoutubeId = extractYouTubeId(rawGlobalYoutubeUrl);
