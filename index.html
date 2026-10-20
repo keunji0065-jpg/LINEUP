@@ -1011,6 +1011,7 @@
                           setGroupedProducts([]);
                       }
                       setIsInitialLoad(false);
+                      return;
                   } else if (val._live_catalog !== undefined) {
                       const mirrorItems = Array.isArray(val._live_catalog.items) ? val._live_catalog.items : [];
                       // 만약 이전에 잘못 묶인 단일 알파벳('E', 'N') 그룹이 미러에 들어있다면 무시하고 시트에서 새로 파싱!
