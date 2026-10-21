@@ -707,6 +707,7 @@
           const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
           const [confirmResetAll, setConfirmResetAll] = useState(false);
           const [unavailableYtIds, setUnavailableYtIds] = useState({});
+          const [selectedPreCapId, setSelectedPreCapId] = useState(null);
           
           const adminClickCount = useRef(0);
           const adminTimer = useRef(null);
@@ -867,7 +868,7 @@
               setIsRefreshing(true);
               
               try {
-                const GAS_URL = 'https://script.google.com/macros/s/AKfycbz5wMdAoYwgihXThXfWyVwnEVfI57HhE9MeK4K6FdtEU53s_Sr5LaM6IdlgfgwzvhBU/exec';
+                const GAS_URL = 'https://script.google.com/macros/s/AKfycbwBjZG8rSPi129Jr2Et_4008ZU8Q_SH3Q0rI0ls1Wt9SYD7J47NlG3bgY2FZ6Hl7b_e/exec';
                 const MASTER_ID = '1B8SBMX18_Px1CpRHuDTxqodqudiTrf6NfVoptjHtnGQ';
                 let validRows = [];
                 let loadedFromGas = false;
@@ -1125,6 +1126,102 @@
           );
           const isPhotoOnlyMode = Boolean(firebaseData._global_config?.isPhotoOnlyMode);
 
+          const preCaptures = useMemo(() => {
+              const raw = firebaseData._pre_captures || {};
+              return Object.entries(raw)
+                  .map(([k, v]) => ({ id: k, ...(v || {}) }))
+                  .filter(item => item.videoTime || item.image)
+                  .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+          }, [firebaseData]);
+
+          const activePreCap = useMemo(() => {
+              if (preCaptures.length === 0) return null;
+              return preCaptures.find(p => p.id === selectedPreCapId) || preCaptures[0];
+          }, [preCaptures, selectedPreCapId]);
+
+          const handleJumpToLiveNow = () => {
+              if (ytPlayerRef.current && typeof ytPlayerRef.current.getDuration === 'function') {
+                  const dur = ytPlayerRef.current.getDuration() || 0;
+                  if (dur > 0) {
+                      const target = Math.max(0, dur - 1);
+                      ytPlayerRef.current.seekTo(target, true);
+                      if (ytPlayerRef.current.playVideo) ytPlayerRef.current.playVideo();
+                      setCurrentPlayerSec(Math.floor(target));
+                      setIsPlayerPlaying(true);
+                      return;
+                  }
+              }
+              if (html5VideoRef.current && html5VideoRef.current.duration) {
+                  const target = Math.max(0, html5VideoRef.current.duration - 0.5);
+                  html5VideoRef.current.currentTime = target;
+                  html5VideoRef.current.play();
+                  setCurrentPlayerSec(Math.floor(target));
+                  setIsPlayerPlaying(true);
+              }
+          };
+
+          const handleCreatePreCapture = async () => {
+              let liveSec = currentPlayerSec;
+              if (ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
+                  const cur = ytPlayerRef.current.getCurrentTime();
+                  if (cur && cur > 0) liveSec = Math.floor(cur);
+              } else if (html5VideoRef.current && html5VideoRef.current.currentTime > 0) {
+                  liveSec = Math.floor(html5VideoRef.current.currentTime);
+              } else if (liveStartTimestamp) {
+                  liveSec = Math.max(0, Math.floor((Date.now() - liveStartTimestamp) / 1000));
+              }
+
+              if (!activeVideo && globalYoutubeId && !isAdminStudioMode) {
+                  setActiveVideo({
+                      type: 'youtube',
+                      videoId: globalYoutubeId,
+                      startSeconds: 0,
+                      title: '전체 라이브 방송',
+                      groupId: '_global',
+                      isLive: Boolean(liveStartTimestamp),
+                      playKey: Date.now()
+                  });
+              }
+
+              const formattedTime = formatSecondsToTime(Math.max(0, liveSec));
+              const currentPlayingYtId = (activeVideo && activeVideo.type === 'youtube' && activeVideo.videoId)
+                  ? activeVideo.videoId
+                  : globalYoutubeId;
+
+              const capturedBase64 = await captureCurrentPlayerCenterSquare();
+              const capId = `pre_${Date.now()}`;
+              const payload = {
+                  createdAt: Date.now(),
+                  videoTime: formattedTime || '00:00',
+                  videoUrl: currentPlayingYtId ? `https://www.youtube.com/watch?v=${currentPlayingYtId}` : '',
+                  image: capturedBase64 || null
+              };
+
+              await db.ref(`ember_live_data/_pre_captures/${capId}`).set(payload);
+              setSelectedPreCapId(capId);
+              showToast(`⚡ 선캡처 완료 (${payload.videoTime})`);
+          };
+
+          const handleApplyPreCaptureToProduct = async (group, targetCap = null) => {
+              const cap = targetCap || activePreCap;
+              if (!cap) return;
+              const updates = {
+                  videoTime: cap.videoTime || null,
+                  videoDisabled: null
+              };
+              if (cap.videoUrl) updates.videoUrl = cap.videoUrl;
+              if (cap.image) updates.image = cap.image;
+
+              await db.ref(`ember_live_data/${group.id}`).update(updates);
+              await db.ref(`ember_live_data/_pre_captures/${cap.id}`).remove();
+              showToast(`✅ [${group.name}] 선캡처(${cap.videoTime}) 연결 완료!`);
+          };
+
+          const handleDeletePreCapture = (capId, e) => {
+              if (e) e.stopPropagation();
+              db.ref(`ember_live_data/_pre_captures/${capId}`).remove();
+          };
+
           const handleVideoUnavailable = useCallback((badYtId) => {
               if (!badYtId) return;
               setUnavailableYtIds(prev => ({ ...prev, [badYtId]: true }));
@@ -1147,6 +1244,8 @@
               const nextState = !isStoreClosed;
               isStoreClosedRef.current = nextState;
               isConfigLoadedRef.current = true;
+              const GAS_URL = 'https://script.google.com/macros/s/AKfycbwBjZG8rSPi129Jr2Et_4008ZU8Q_SH3Q0rI0ls1Wt9SYD7J47NlG3bgY2FZ6Hl7b_e/exec';
+              const MASTER_ID = '1B8SBMX18_Px1CpRHuDTxqodqudiTrf6NfVoptjHtnGQ';
 
               if (nextState) {
                   setActiveVideo(null);
@@ -1154,13 +1253,25 @@
                   if (!isAdminRef.current) {
                       setGroupedProducts([]);
                   }
+                  // 마감 시 구글 시트의 '실시간재고' 시트도 즉시 비워서 다음 방송에 섞이지 않도록 처리!
+                  fetch(GAS_URL, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                      body: JSON.stringify({
+                          action: 'save_inventory',
+                          masterId: MASTER_ID,
+                          forceClear: true,
+                          data: []
+                      })
+                  }).catch(() => {});
+
                   db.ref('ember_live_data').update({
                       '_global_config/catalogClosedLock': true,
                       '_global_config/isStoreClosed': true,
                       '_global_config/currentPinnedId': null,
                       '_live_catalog': { items: [], updatedAt: Date.now() }
                   }).then(() => {
-                      showToast("🔒 판매 마감! 다시 [판매오픈]을 누르기 전까지 고객 화면이 영구 잠금됩니다.");
+                      showToast("🔒 판매 마감! 고객 화면 잠금 및 [실시간재고] 시트가 정리되었습니다.");
                   });
               } else {
                   db.ref('ember_live_data/_global_config').update({
@@ -1596,10 +1707,11 @@
                   '_live_catalog': {
                       items: [],
                       updatedAt: Date.now()
-                  }
+                  },
+                  '_pre_captures': null
               };
               Object.keys(firebaseData || {}).forEach(k => {
-                  if (!k.startsWith('_portal_') && k !== '_global_config' && k !== '_live_catalog') {
+                  if (!k.startsWith('_portal_') && k !== '_global_config' && k !== '_live_catalog' && k !== '_pre_captures') {
                       updates[k] = null;
                   }
               });
@@ -2241,6 +2353,64 @@
                                   </p>
                               </div>
                           )}
+
+                          {/* ⚡ 선캡처 바 & 저장된 선캡처 선택 목록 */}
+                          <div className="bg-violet-50 border border-violet-200 rounded-lg p-2 space-y-1.5">
+                              <div className="flex items-center justify-between gap-2">
+                                  <button
+                                      type="button"
+                                      onClick={handleCreatePreCapture}
+                                      className="flex-1 py-1.5 px-3 bg-violet-600 hover:bg-violet-500 active:scale-[0.99] text-white font-extrabold text-xs rounded-md shadow-sm transition flex items-center justify-center gap-1.5"
+                                  >
+                                      <span>⚡ 선캡처 {currentPlayerSec > 0 ? `(${formatSecondsToTime(currentPlayerSec)})` : ''}</span>
+                                  </button>
+                                  {preCaptures.length > 0 && (
+                                      <button
+                                          type="button"
+                                          onClick={() => db.ref('ember_live_data/_pre_captures').remove()}
+                                          className="px-2 py-1.5 bg-white hover:bg-red-50 text-slate-500 hover:text-red-600 border border-slate-200 rounded-md text-[10px] font-bold shrink-0"
+                                      >
+                                          전체비우기
+                                      </button>
+                                  )}
+                              </div>
+
+                              {preCaptures.length > 0 && (
+                                  <div className="flex items-center gap-1.5 overflow-x-auto pt-1 pb-0.5">
+                                      {preCaptures.map((cap, idx) => {
+                                          const isSelected = activePreCap && activePreCap.id === cap.id;
+                                          return (
+                                              <div
+                                                  key={cap.id}
+                                                  onClick={() => setSelectedPreCapId(cap.id)}
+                                                  className={`relative flex items-center gap-1.5 px-2 py-1 rounded-md border cursor-pointer shrink-0 transition ${
+                                                      isSelected
+                                                          ? 'bg-violet-600 text-white border-violet-700 ring-2 ring-violet-300 shadow-sm'
+                                                          : 'bg-white text-slate-700 border-violet-200 hover:bg-violet-100/50'
+                                                  }`}
+                                              >
+                                                  {cap.image ? (
+                                                      <img src={cap.image} className="w-7 h-7 rounded object-cover border border-black/10 shrink-0" />
+                                                  ) : (
+                                                      <div className="w-7 h-7 rounded bg-slate-200 text-slate-500 flex items-center justify-center text-[9px] font-bold shrink-0">영상</div>
+                                                  )}
+                                                  <div className="text-[10px] leading-tight pr-3">
+                                                      <div className="font-extrabold">#{idx + 1}</div>
+                                                      <div className={isSelected ? 'text-amber-300 font-bold' : 'text-red-600 font-bold'}>▶{cap.videoTime}</div>
+                                                  </div>
+                                                  <button
+                                                      type="button"
+                                                      onClick={(e) => handleDeletePreCapture(cap.id, e)}
+                                                      className={`absolute top-0.5 right-1 text-[10px] font-bold ${isSelected ? 'text-white/70 hover:text-white' : 'text-slate-400 hover:text-red-600'}`}
+                                                  >
+                                                      ✕
+                                                  </button>
+                                              </div>
+                                          );
+                                      })}
+                                  </div>
+                              )}
+                          </div>
                       </div>
                   )}
 
@@ -2403,21 +2573,23 @@
                                         {isAdmin && activeTab === 'admin' ? (
                                             <div className="mt-1 space-y-1">
                                                 <div className="flex gap-1 items-center flex-wrap">
+                                                    {activePreCap && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleApplyPreCaptureToProduct(group, activePreCap)}
+                                                            className="px-2 py-0.5 rounded text-[10px] font-extrabold shrink-0 transition shadow-sm bg-violet-600 hover:bg-violet-500 text-white border border-violet-700 flex items-center gap-0.5"
+                                                            title="위에서 선택한 선캡처(사진+영상시간 세트)를 이 상품에 바로 연결합니다"
+                                                        >
+                                                            <span>⚡#{preCaptures.findIndex(p => p.id === activePreCap.id) + 1} 연결({activePreCap.videoTime})</span>
+                                                        </button>
+                                                    )}
                                                     <button
                                                         type="button"
                                                         onClick={() => handleStampFromPlayer(group, true)}
                                                         className="px-2 py-0.5 rounded text-[10px] font-extrabold shrink-0 transition shadow-sm bg-amber-400 hover:bg-amber-300 text-black border border-amber-500 flex items-center gap-0.5"
-                                                        title="현재 영상의 시간 기록과 함께 세로 화면의 위아래를 날리고 정중앙 1:1 사진을 자동 캡처해 올립니다!"
+                                                        title="지금 보고 있는 영상 시간과 1:1 캡처 사진을 이 상품에 바로 저장합니다"
                                                     >
-                                                        <span>🎯위치+📸캡처{currentPlayerSec > 0 ? `(${formatSecondsToTime(currentPlayerSec)})` : ''}</span>
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleStampFromPlayer(group, false)}
-                                                        className="px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 transition bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300"
-                                                        title="사진은 그대로 두고 영상 시작 시간만 현재 위치로 찍습니다"
-                                                    >
-                                                        ⏱️시간만
+                                                        <span>📸바로캡처{currentPlayerSec > 0 ? `(${formatSecondsToTime(currentPlayerSec)})` : ''}</span>
                                                     </button>
                                                     <button
                                                         type="button"
@@ -2769,13 +2941,11 @@
                                         </span>
                                     </div>
 
-                                    <div className="grid grid-cols-6 gap-1">
-                                        <button onClick={() => handleSeekRelative(-10)} className="py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-bold border border-slate-700 whitespace-nowrap">-10초</button>
-                                        <button onClick={() => handleSeekRelative(-5)} className="py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-bold border border-slate-700 whitespace-nowrap">-5초</button>
-                                        <button onClick={() => handleSeekRelative(-1)} className="py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded text-[11px] font-bold border border-slate-700 whitespace-nowrap">-1초</button>
-                                        <button onClick={() => handleSeekRelative(1)} className="py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded text-[11px] font-bold border border-slate-700 whitespace-nowrap">+1초</button>
-                                        <button onClick={() => handleSeekRelative(5)} className="py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-bold border border-slate-700 whitespace-nowrap">+5초</button>
-                                        <button onClick={() => handleSeekRelative(10)} className="py-1 bg-slate-800 hover:bg-slate-700 text-white rounded text-[11px] font-bold border border-slate-700 whitespace-nowrap">+10초</button>
+                                    <div className="grid grid-cols-4 gap-1.5">
+                                        <button onClick={() => handleSeekRelative(-10)} className="py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded text-xs font-extrabold border border-slate-700 whitespace-nowrap">-10초</button>
+                                        <button onClick={handleJumpToLiveNow} className="py-1.5 bg-red-600/90 hover:bg-red-500 text-white rounded text-xs font-extrabold border border-red-500 whitespace-nowrap">🔴 현재</button>
+                                        <button onClick={() => handleSeekRelative(10)} className="py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded text-xs font-extrabold border border-slate-700 whitespace-nowrap">+10초</button>
+                                        <button onClick={handleCreatePreCapture} className="py-1.5 bg-violet-600 hover:bg-violet-500 text-white rounded text-xs font-extrabold border border-violet-400 shadow whitespace-nowrap">⚡ 선캡처</button>
                                     </div>
 
                                     <div className="bg-slate-950/90 px-2.5 py-2 rounded-lg border border-slate-800 space-y-1.5">
