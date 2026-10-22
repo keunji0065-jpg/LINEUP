@@ -7,6 +7,14 @@
     <!-- 유튜브 임베드 오류(153 등) 방지를 위한 Referrer 정책 -->
     <meta name="referrer" content="strict-origin-when-cross-origin">
     <title>엠버언니 라이브 방송 제품</title>
+    <script>
+        window.addEventListener('error', function(e) {
+            if (!e.message || e.message === 'Script error.' || (e.filename && e.filename.includes('google.com'))) {
+                e.preventDefault();
+                return true;
+            }
+        }, true);
+    </script>
     <!-- 디자인(Tailwind CSS) -->
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -846,15 +854,21 @@
           // 구글 시트 '실시간재고' 탭을 캐시나 GAS 오류 없이 브라우저에서 직접 읽어오는 직통 함수 (JSONP)
           const fetchInventorySheetDirect = useCallback((sheetId) => {
               return new Promise((resolve) => {
+                  let settled = false;
                   const cbName = `inv_gviz_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
                   const timer = setTimeout(() => {
-                      if (window[cbName]) delete window[cbName];
-                      resolve(null);
+                      if (!settled) {
+                          settled = true;
+                          window[cbName] = () => {};
+                          resolve(null);
+                      }
                   }, 5000);
 
                   window[cbName] = (res) => {
+                      if (settled) return;
+                      settled = true;
                       clearTimeout(timer);
-                      delete window[cbName];
+                      window[cbName] = () => {};
                       if (!res || res.status === 'error' || !res.table || !Array.isArray(res.table.rows)) {
                           resolve(null);
                           return;
@@ -879,15 +893,26 @@
                       resolve(parsedRows);
                   };
 
-                  const script = document.createElement('script');
-                  script.src = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=responseHandler:${cbName}&sheet=${encodeURIComponent('실시간재고')}&headers=1&t=${Date.now()}`;
-                  script.onerror = () => {
-                      clearTimeout(timer);
-                      if (window[cbName]) delete window[cbName];
-                      resolve(null);
-                  };
-                  document.body.appendChild(script);
-                  setTimeout(() => { try { document.body.removeChild(script); } catch (e) {} }, 6000);
+                  try {
+                      const script = document.createElement('script');
+                      script.src = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=responseHandler:${cbName}&sheet=${encodeURIComponent('실시간재고')}&headers=1&t=${Date.now()}`;
+                      script.onerror = () => {
+                          if (!settled) {
+                              settled = true;
+                              clearTimeout(timer);
+                              window[cbName] = () => {};
+                              resolve(null);
+                          }
+                      };
+                      document.body.appendChild(script);
+                      setTimeout(() => { try { if (script.parentNode) script.parentNode.removeChild(script); } catch (e) {} }, 6000);
+                  } catch (err) {
+                      if (!settled) {
+                          settled = true;
+                          clearTimeout(timer);
+                          resolve(null);
+                      }
+                  }
               });
           }, []);
 
