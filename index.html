@@ -843,6 +843,54 @@
               });
           }, []);
 
+          // 구글 시트 '실시간재고' 탭을 캐시나 GAS 오류 없이 브라우저에서 직접 읽어오는 직통 함수 (JSONP)
+          const fetchInventorySheetDirect = useCallback((sheetId) => {
+              return new Promise((resolve) => {
+                  const cbName = `inv_gviz_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+                  const timer = setTimeout(() => {
+                      if (window[cbName]) delete window[cbName];
+                      resolve(null);
+                  }, 5000);
+
+                  window[cbName] = (res) => {
+                      clearTimeout(timer);
+                      delete window[cbName];
+                      if (!res || res.status === 'error' || !res.table || !Array.isArray(res.table.rows)) {
+                          resolve(null);
+                          return;
+                      }
+                      const parsedRows = [];
+                      res.table.rows.forEach(r => {
+                          const cells = r.c || [];
+                          const nameVal = cells[0] ? String(cells[0].f ?? cells[0].v ?? '').trim() : '';
+                          const priceVal = cells[1] ? String(cells[1].f ?? cells[1].v ?? '0') : '0';
+                          const statusVal = cells[3] ? String(cells[3].f ?? cells[3].v ?? '').trim() : '';
+                          const priceNum = parseInt(priceVal.replace(/[^0-9-]/g, ''), 10);
+                          if (nameVal && nameVal.toLowerCase() !== 'name' && nameVal !== '상품명' && !isNaN(priceNum) && priceNum > 0) {
+                              parsedRows.push({
+                                  originalName: nameVal,
+                                  isSoldOut: statusVal === '품절',
+                                  numericPrice: priceNum,
+                                  formattedPrice: priceNum.toLocaleString(),
+                                  sheetVideoCol: ''
+                              });
+                          }
+                      });
+                      resolve(parsedRows);
+                  };
+
+                  const script = document.createElement('script');
+                  script.src = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=responseHandler:${cbName}&sheet=${encodeURIComponent('실시간재고')}&headers=1&t=${Date.now()}`;
+                  script.onerror = () => {
+                      clearTimeout(timer);
+                      if (window[cbName]) delete window[cbName];
+                      resolve(null);
+                  };
+                  document.body.appendChild(script);
+                  setTimeout(() => { try { document.body.removeChild(script); } catch (e) {} }, 6000);
+              });
+          }, []);
+
           const fetchSheetData = useCallback(async (isManualRefresh = false) => {
               if (!isConfigLoadedRef.current) {
                   try {
@@ -868,77 +916,44 @@
               setIsRefreshing(true);
               
               try {
-                const GAS_URL = 'https://script.google.com/macros/s/AKfycbyauz2IJXVC8dyuYy11wMJiB7xrXkh_rRCJ-u4QPHWHFxL4gEZeg-QK2S4-4EURNyIA/exec';
+                const GAS_URL = 'https://script.google.com/macros/s/AKfycbzBczJEJh3m4A_cMChAO2dcyLo2cuRA8pFcDDI-mZJc711bC0rIapnZwHokmmm2A0Ej/exec';
                 const MASTER_ID = '1B8SBMX18_Px1CpRHuDTxqodqudiTrf6NfVoptjHtnGQ';
                 let validRows = [];
-                let loadedFromGas = false;
+                let loadedSuccessfully = false;
 
-                // 1순위: 캐시 딜레이가 전혀 없는 구글 앱스 스크립트(실시간재고 시트 직접 읽기) 호출
-                try {
-                    const gasRes = await fetch(`${GAS_URL}?action=get_all&masterId=${MASTER_ID}&t=${Date.now()}`, { cache: 'no-store' });
-                    if (gasRes.ok) {
-                        const gasJson = await gasRes.json();
-                        if (gasJson && (gasJson.status === 'success' || gasJson.success) && Array.isArray(gasJson.inventory)) {
-                            loadedFromGas = true;
-                            gasJson.inventory.forEach(item => {
-                                const name = String(item.name || item['상품명'] || item.col_0 || '').trim();
-                                const priceRaw = item.price !== undefined ? item.price : (item['단가'] !== undefined ? item['단가'] : item.col_1);
-                                const priceNum = parseInt(String(priceRaw || '0').replace(/[^0-9-]/g, ''), 10);
-                                const statusStr = String(item.status || item['상태'] || item.col_3 || '').trim();
-                                if (name && name.toLowerCase() !== 'name' && name !== '상품명' && !isNaN(priceNum) && priceNum > 0) {
-                                    validRows.push({
-                                        originalName: name,
-                                        isSoldOut: statusStr === '품절' || Boolean(item.isSoldOut),
-                                        numericPrice: priceNum,
-                                        formattedPrice: priceNum.toLocaleString(),
-                                        sheetVideoCol: ''
-                                    });
-                                }
-                            });
-                        }
-                    }
-                } catch (gasErr) {}
+                // 1순위: 구글 시트 '실시간재고' 탭 직통 리더 (gviz) - 가장 빠르고 옛날 캐시가 절대 섞이지 않음!
+                const directRows = await fetchInventorySheetDirect(MASTER_ID);
+                if (Array.isArray(directRows)) {
+                    validRows = directRows;
+                    loadedSuccessfully = true;
+                }
 
-                // 2순위 폴백: GAS에서 0건이거나 통신 실패 시에만 기존 CSV 링크 보조 사용
-                if (!loadedFromGas || validRows.length === 0) {
-                    const cacheBuster = Date.now();
-                    const csvUrl = `https://docs.google.com/spreadsheets/d/e/2PACX-1vRI6cW1MyLv5gbcfsjEyYuMDWdL6jDit_Fuz2ZNXPKwEJZeedXoNorHHhUdsoDnDxBzzrFu6P72WVOy/pub?gid=1797935796&single=true&output=csv&_cb=${cacheBuster}`;
-                    const response = await fetch(csvUrl, { cache: 'no-store' });
-                    if (response.ok) {
-                        const text = await response.text();
-                        if (!text.trim().startsWith('<!DOCTYPE') && !text.trim().startsWith('<html')) {
-                            const rows = text.replace(/\r/g, '').split('\n');
-                            rows.forEach((row) => {
-                                const cleanRow = row.trim();
-                                if (!cleanRow) return;
-                                const cols = []; let current = ''; let inQuotes = false;
-                                for (let i = 0; i < cleanRow.length; i++) {
-                                    if (cleanRow[i] === '"') inQuotes = !inQuotes;
-                                    else if (cleanRow[i] === ',' && !inQuotes) { cols.push(current.trim()); current = ''; }
-                                    else current += cleanRow[i];
-                                }
-                                cols.push(current.trim());
-                                if (cols[0]) {
-                                    const firstColLower = String(cols[0]).toLowerCase();
-                                    if (firstColLower !== "name" && firstColLower !== "price" && firstColLower !== "상품명") {
-                                        const rawPrice = cols[1] ? String(cols[1]).trim() : '';
-                                        const numOnly = rawPrice.replace(/[^0-9-]/g, '');
-                                        const priceNum = parseInt(numOnly, 10);
-                                        const sheetVideoCol = cols[3] ? String(cols[3]).trim() : '';
-                                        if (rawPrice !== '-' && !(priceNum <= 0)) {
-                                            validRows.push({
-                                                originalName: String(cols[0]).trim(),
-                                                isSoldOut: cols[2] ? String(cols[2]).trim() === '품절' : false,
-                                                numericPrice: isNaN(priceNum) ? 0 : priceNum,
-                                                formattedPrice: isNaN(priceNum) ? rawPrice : priceNum.toLocaleString(),
-                                                sheetVideoCol: sheetVideoCol
-                                            });
-                                        }
+                // 2순위: 직통 리더가 비어있거나 실패 시 구글 앱스 스크립트(GAS) 호출 (옛날 CSV 폴백은 영구 제거!)
+                if (!loadedSuccessfully) {
+                    try {
+                        const gasRes = await fetch(`${GAS_URL}?action=get_all&masterId=${MASTER_ID}&t=${Date.now()}`, { cache: 'no-store' });
+                        if (gasRes.ok) {
+                            const gasJson = await gasRes.json();
+                            if (gasJson && (gasJson.status === 'success' || gasJson.success) && Array.isArray(gasJson.inventory)) {
+                                loadedSuccessfully = true;
+                                gasJson.inventory.forEach(item => {
+                                    const name = String(item.name || item['상품명'] || item.col_0 || '').trim();
+                                    const priceRaw = item.price !== undefined ? item.price : (item['단가'] !== undefined ? item['단가'] : item.col_1);
+                                    const priceNum = parseInt(String(priceRaw || '0').replace(/[^0-9-]/g, ''), 10);
+                                    const statusStr = String(item.status || item['상태'] || item.col_3 || '').trim();
+                                    if (name && name.toLowerCase() !== 'name' && name !== '상품명' && !isNaN(priceNum) && priceNum > 0) {
+                                        validRows.push({
+                                            originalName: name,
+                                            isSoldOut: statusStr === '품절' || Boolean(item.isSoldOut),
+                                            numericPrice: priceNum,
+                                            formattedPrice: priceNum.toLocaleString(),
+                                            sheetVideoCol: ''
+                                        });
                                     }
-                                }
-                            });
+                                });
+                            }
                         }
-                    }
+                    } catch (gasErr) {}
                 }
 
                 if (isStoreClosedRef.current && !isAdminRef.current) {
@@ -948,23 +963,16 @@
                     return;
                 }
 
-                const groupArray = parseRawItemsToGroups(validRows);
-                const currentTotalOptions = validRows.length;
-
-                if (groupArray.length === 0) {
-                    // 🛡️ 방어막: 시트에서 일시적으로 0건이 읽히더라도 기존에 불러온 라인업(또는 Firebase 미러)이 있다면 절대 지우지 않고 유지합니다!
+                if (!loadedSuccessfully) {
                     setIsInitialLoad(false);
                     setIsRefreshing(false);
                     return;
                 }
 
+                const groupArray = parseRawItemsToGroups(validRows);
+                maxKnownOptionsCount.current = validRows.length;
+
                 setGroupedProducts(prev => {
-                    if (!isManualRefresh && !loadedFromGas && maxKnownOptionsCount.current > 0 && currentTotalOptions < maxKnownOptionsCount.current) {
-                        return prev;
-                    }
-                    if (currentTotalOptions >= maxKnownOptionsCount.current || isManualRefresh || loadedFromGas) {
-                        maxKnownOptionsCount.current = currentTotalOptions;
-                    }
                     const prevJson = JSON.stringify(prev);
                     const nextJson = JSON.stringify(groupArray);
                     if (prevJson !== nextJson) {
@@ -986,7 +994,7 @@
                 setIsInitialLoad(false);
                 setIsRefreshing(false);
               }
-          }, [parseRawItemsToGroups]);
+          }, [parseRawItemsToGroups, fetchInventorySheetDirect]);
 
           useEffect(() => {
               try { localStorage.removeItem('ember_grouped_cache_v1'); } catch (e) {}
@@ -1244,7 +1252,7 @@
               const nextState = !isStoreClosed;
               isStoreClosedRef.current = nextState;
               isConfigLoadedRef.current = true;
-              const GAS_URL = 'https://script.google.com/macros/s/AKfycbyauz2IJXVC8dyuYy11wMJiB7xrXkh_rRCJ-u4QPHWHFxL4gEZeg-QK2S4-4EURNyIA/exec';
+              const GAS_URL = 'https://script.google.com/macros/s/AKfycbzBczJEJh3m4A_cMChAO2dcyLo2cuRA8pFcDDI-mZJc711bC0rIapnZwHokmmm2A0Ej/exec';
               const MASTER_ID = '1B8SBMX18_Px1CpRHuDTxqodqudiTrf6NfVoptjHtnGQ';
 
               if (nextState) {
