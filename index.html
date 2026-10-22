@@ -941,7 +941,7 @@
               setIsRefreshing(true);
               
               try {
-                const GAS_URL = 'https://script.google.com/macros/s/AKfycbxvccAS0Zy37eBEyY0IDgHBFroNwzabYVDvg3JvaYUQYr9d_hfxdWdKbDssEPg-OJN7/exec';
+                const GAS_URL = 'https://script.google.com/macros/s/AKfycbzrMczblUPLxqGESdkZks8osdL-CihDenW94Ae3ODL8u_QhVAZGKrsVI_KchtHjCTFg/exec';
                 const MASTER_ID = '1B8SBMX18_Px1CpRHuDTxqodqudiTrf6NfVoptjHtnGQ';
                 let validRows = [];
                 let loadedSuccessfully = false;
@@ -1277,7 +1277,7 @@
               const nextState = !isStoreClosed;
               isStoreClosedRef.current = nextState;
               isConfigLoadedRef.current = true;
-              const GAS_URL = 'https://script.google.com/macros/s/AKfycbxvccAS0Zy37eBEyY0IDgHBFroNwzabYVDvg3JvaYUQYr9d_hfxdWdKbDssEPg-OJN7/exec';
+              const GAS_URL = 'https://script.google.com/macros/s/AKfycbzrMczblUPLxqGESdkZks8osdL-CihDenW94Ae3ODL8u_QhVAZGKrsVI_KchtHjCTFg/exec';
               const MASTER_ID = '1B8SBMX18_Px1CpRHuDTxqodqudiTrf6NfVoptjHtnGQ';
 
               if (nextState) {
@@ -1698,7 +1698,7 @@
           };
 
           const verifyAdmin = () => {
-              if (authInput === "1234") { 
+              if (authInput === "003637") { 
                   setIsAdmin(true); setShowAuthModal(false); setAuthInput(""); 
                   showToast("관리자 모드가 활성화되었습니다.");
               } else {
@@ -2036,11 +2036,15 @@
                 {/* 좌측 메인 컬럼: 고객 모바일 화면 또는 관리자 상품 리스트 */}
                 <div className={`h-full bg-white relative overflow-hidden flex flex-col ${isAdminStudioMode ? 'w-full md:w-[440px] shrink-0 border-r border-slate-200' : 'w-full'}`}>
                 
-                {/* 상단 헤더 */}
-                <header className="py-2.5 bg-black flex-shrink-0 z-20 relative flex items-center justify-center px-3">
+                {/* 상단 헤더 (까만색 상단 바 아무 곳이나 연속 3번 터치 시 관리자 창 오픈) */}
+                <header 
+                  onClick={handleAdminClick}
+                  className="py-2.5 bg-black flex-shrink-0 z-20 relative flex items-center justify-center px-3 select-none cursor-default"
+                >
                   {globalYoutubeId && !isStoreClosed && !isPhotoOnlyMode && (
                     <button 
-                        onClick={() => {
+                        onClick={(e) => {
+                            e.stopPropagation();
                             if (playerLayout === 'minimized') setPlayerLayout('floating');
                             setActiveVideo({ 
                                 type: 'youtube', 
@@ -2068,11 +2072,6 @@
                     </button>
                   )}
                   <h1 className="text-lg font-serif text-white tracking-[0.2em] uppercase">EMBER</h1>
-                  <button onClick={handleAdminClick} className="absolute right-3 p-2 text-gray-700 hover:text-gray-400" title="관리자">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-[14px] w-[14px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                    </svg>
-                  </button>
                 </header>
 
                 {isAdmin && (
