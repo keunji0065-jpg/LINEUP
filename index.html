@@ -954,9 +954,9 @@
                     setGroupedProducts(finalGroups);
                     const allValidOptions = finalGroups.flatMap(g => (g.options || []).map(o => o.originalName));
                     setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(name => allValidOptions.includes(name)));
-                } else {
-                    setGroupedProducts([]);
                 }
+                // 🛡️ 핵심: 구글 시트가 저장 중인 찰나(0.5초)이거나 일시적 통신 지연으로 빈 배열이 오더라도,
+                // 현재 화면에 이미 떠 있는 생방송 상품 목록을 절대 지우지 않고 그대로 유지합니다!
                 
                 setIsInitialLoad(false);
                 setIsRefreshing(false);
