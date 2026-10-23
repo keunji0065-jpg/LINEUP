@@ -324,12 +324,15 @@
                                         try {
                                             if (event.target && typeof event.target.getCurrentTime === 'function') {
                                                 const cur = event.target.getCurrentTime();
+                                                let curFloor = 0;
                                                 if (cur && !isNaN(cur) && cur > 0) {
-                                                    onTimeUpdate(Math.floor(cur));
+                                                    curFloor = Math.floor(cur);
+                                                    onTimeUpdate(curFloor);
                                                 }
                                                 if (onDurationChange && typeof event.target.getDuration === 'function') {
                                                     const dur = event.target.getDuration();
-                                                    if (dur && dur > 0) onDurationChange(Math.floor(dur));
+                                                    const bestDur = Math.max(dur ? Math.floor(dur) : 0, curFloor);
+                                                    if (bestDur > 0) onDurationChange(bestDur);
                                                 }
                                             }
                                         } catch (err) {}
@@ -1100,16 +1103,30 @@
           }, [preCaptures, selectedPreCapId]);
 
           const handleJumpToLiveNow = () => {
-              if (ytPlayerRef.current && typeof ytPlayerRef.current.getDuration === 'function') {
-                  const dur = ytPlayerRef.current.getDuration() || 0;
-                  if (dur > 0) {
-                      const target = Math.max(0, dur - 1);
-                      ytPlayerRef.current.seekTo(target, true);
+              if (ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+                  try {
+                      const dur = (typeof ytPlayerRef.current.getDuration === 'function') ? (ytPlayerRef.current.getDuration() || 0) : 0;
+                      const cur = (typeof ytPlayerRef.current.getCurrentTime === 'function') ? (ytPlayerRef.current.getCurrentTime() || 0) : 0;
+                      // 유튜브 라이브 스트리밍(DVR)은 getDuration()이 처음 로드된 시점에 고정되므로,
+                      // 아주 큰 초(999999초)로 seekTo를 호출하면 유튜브 플레이어가 자동으로 실시간(Live Edge) 맨 끝으로 즉시 점프합니다!
+                      const targetSeek = Math.max(dur + 86400, cur + 86400, 999999);
+                      ytPlayerRef.current.seekTo(targetSeek, true);
                       if (ytPlayerRef.current.playVideo) ytPlayerRef.current.playVideo();
-                      setCurrentPlayerSec(Math.floor(target));
                       setIsPlayerPlaying(true);
+
+                      setTimeout(() => {
+                          try {
+                              if (ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
+                                  const liveNowSec = Math.floor(ytPlayerRef.current.getCurrentTime() || 0);
+                                  if (liveNowSec > 0) {
+                                      setCurrentPlayerSec(liveNowSec);
+                                      setPlayerDuration(prev => Math.max(prev, liveNowSec));
+                                  }
+                              }
+                          } catch (e) {}
+                      }, 350);
                       return;
-                  }
+                  } catch (e) {}
               }
               if (html5VideoRef.current && html5VideoRef.current.duration) {
                   const target = Math.max(0, html5VideoRef.current.duration - 0.5);
