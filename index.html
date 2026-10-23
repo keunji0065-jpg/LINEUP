@@ -851,71 +851,6 @@
               });
           }, []);
 
-          // 구글 시트 '실시간재고' 탭을 캐시나 GAS 오류 없이 브라우저에서 직접 읽어오는 직통 함수 (JSONP)
-          const fetchInventorySheetDirect = useCallback((sheetId) => {
-              return new Promise((resolve) => {
-                  let settled = false;
-                  const cbName = `inv_gviz_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-                  const timer = setTimeout(() => {
-                      if (!settled) {
-                          settled = true;
-                          window[cbName] = () => {};
-                          resolve(null);
-                      }
-                  }, 5000);
-
-                  window[cbName] = (res) => {
-                      if (settled) return;
-                      settled = true;
-                      clearTimeout(timer);
-                      window[cbName] = () => {};
-                      if (!res || res.status === 'error' || !res.table || !Array.isArray(res.table.rows)) {
-                          resolve(null);
-                          return;
-                      }
-                      const parsedRows = [];
-                      res.table.rows.forEach(r => {
-                          const cells = r.c || [];
-                          const nameVal = cells[0] ? String(cells[0].f ?? cells[0].v ?? '').trim() : '';
-                          const priceVal = cells[1] ? String(cells[1].f ?? cells[1].v ?? '0') : '0';
-                          const statusVal = cells[3] ? String(cells[3].f ?? cells[3].v ?? '').trim() : '';
-                          const priceNum = parseInt(priceVal.replace(/[^0-9-]/g, ''), 10);
-                          if (nameVal && nameVal.toLowerCase() !== 'name' && nameVal !== '상품명' && !isNaN(priceNum) && priceNum > 0) {
-                              parsedRows.push({
-                                  originalName: nameVal,
-                                  isSoldOut: statusVal === '품절',
-                                  numericPrice: priceNum,
-                                  formattedPrice: priceNum.toLocaleString(),
-                                  sheetVideoCol: ''
-                              });
-                          }
-                      });
-                      resolve(parsedRows);
-                  };
-
-                  try {
-                      const script = document.createElement('script');
-                      script.src = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=responseHandler:${cbName}&sheet=${encodeURIComponent('실시간재고')}&headers=1&t=${Date.now()}`;
-                      script.onerror = () => {
-                          if (!settled) {
-                              settled = true;
-                              clearTimeout(timer);
-                              window[cbName] = () => {};
-                              resolve(null);
-                          }
-                      };
-                      document.body.appendChild(script);
-                      setTimeout(() => { try { if (script.parentNode) script.parentNode.removeChild(script); } catch (e) {} }, 6000);
-                  } catch (err) {
-                      if (!settled) {
-                          settled = true;
-                          clearTimeout(timer);
-                          resolve(null);
-                      }
-                  }
-              });
-          }, []);
-
           const fetchSheetData = useCallback(async (isManualRefresh = false) => {
               if (!isConfigLoadedRef.current) {
                   try {
@@ -932,7 +867,22 @@
                   setIsRefreshing(false);
                   return;
               }
-              if (!isManualRefresh && lastFirebaseCatalogTimeRef.current > 0 && (Date.now() - lastFirebaseCatalogTimeRef.current < 15000)) {
+
+              // ✨ 핵심: Firebase(_live_catalog)에 이미 실시간 상품 목록이 들어와 있다면,
+              // 수동 새로고침을 누르더라도 옛날 캐시를 주는 구글 시트를 절대 다시 읽지 않고 Firebase 최신 데이터를 즉시 가져옵니다!
+              try {
+                  const catSnap = await db.ref('ember_live_data/_live_catalog').once('value');
+                  const catVal = catSnap.val();
+                  if (catVal && Array.isArray(catVal.items) && catVal.items.length > 0) {
+                      lastFirebaseCatalogTimeRef.current = Date.now();
+                      setGroupedProducts(catVal.items);
+                      setIsInitialLoad(false);
+                      setIsRefreshing(false);
+                      return;
+                  }
+              } catch (e) {}
+
+              if (!isManualRefresh && lastFirebaseCatalogTimeRef.current > 0) {
                   setIsInitialLoad(false);
                   setIsRefreshing(false);
                   return;
@@ -946,40 +896,31 @@
                 let validRows = [];
                 let loadedSuccessfully = false;
 
-                // 1순위: 구글 시트 '실시간재고' 탭 직통 리더 (gviz) - 가장 빠르고 옛날 캐시가 절대 섞이지 않음!
-                const directRows = await fetchInventorySheetDirect(MASTER_ID);
-                if (Array.isArray(directRows)) {
-                    validRows = directRows;
-                    loadedSuccessfully = true;
-                }
-
-                // 2순위: 직통 리더가 비어있거나 실패 시 구글 앱스 스크립트(GAS) 호출 (옛날 CSV 폴백은 영구 제거!)
-                if (!loadedSuccessfully) {
-                    try {
-                        const gasRes = await fetch(`${GAS_URL}?action=get_all&masterId=${MASTER_ID}&t=${Date.now()}`, { cache: 'no-store' });
-                        if (gasRes.ok) {
-                            const gasJson = await gasRes.json();
-                            if (gasJson && (gasJson.status === 'success' || gasJson.success) && Array.isArray(gasJson.inventory)) {
-                                loadedSuccessfully = true;
-                                gasJson.inventory.forEach(item => {
-                                    const name = String(item.name || item['상품명'] || item.col_0 || '').trim();
-                                    const priceRaw = item.price !== undefined ? item.price : (item['단가'] !== undefined ? item['단가'] : item.col_1);
-                                    const priceNum = parseInt(String(priceRaw || '0').replace(/[^0-9-]/g, ''), 10);
-                                    const statusStr = String(item.status || item['상태'] || item.col_3 || '').trim();
-                                    if (name && name.toLowerCase() !== 'name' && name !== '상품명' && !isNaN(priceNum) && priceNum > 0) {
-                                        validRows.push({
-                                            originalName: name,
-                                            isSoldOut: statusStr === '품절' || Boolean(item.isSoldOut),
-                                            numericPrice: priceNum,
-                                            formattedPrice: priceNum.toLocaleString(),
-                                            sheetVideoCol: ''
-                                        });
-                                    }
-                                });
-                            }
+                // 오직 Firebase(_live_catalog)가 완전히 비어있을 때만 GAS에서 1회 읽어옴 (구글 gviz 옛날 캐시 리더는 영구 제거!)
+                try {
+                    const gasRes = await fetch(`${GAS_URL}?action=get_all&masterId=${MASTER_ID}&t=${Date.now()}`, { cache: 'no-store' });
+                    if (gasRes.ok) {
+                        const gasJson = await gasRes.json();
+                        if (gasJson && (gasJson.status === 'success' || gasJson.success) && Array.isArray(gasJson.inventory)) {
+                            loadedSuccessfully = true;
+                            gasJson.inventory.forEach(item => {
+                                const name = String(item.name || item['상품명'] || item.col_0 || '').trim();
+                                const priceRaw = item.price !== undefined ? item.price : (item['단가'] !== undefined ? item['단가'] : item.col_1);
+                                const priceNum = parseInt(String(priceRaw || '0').replace(/[^0-9-]/g, ''), 10);
+                                const statusStr = String(item.status || item['상태'] || item.col_3 || '').trim();
+                                if (name && name.toLowerCase() !== 'name' && name !== '상품명' && !isNaN(priceNum) && priceNum > 0) {
+                                    validRows.push({
+                                        originalName: name,
+                                        isSoldOut: statusStr === '품절' || Boolean(item.isSoldOut),
+                                        numericPrice: priceNum,
+                                        formattedPrice: priceNum.toLocaleString(),
+                                        sheetVideoCol: ''
+                                    });
+                                }
+                            });
                         }
-                    } catch (gasErr) {}
-                }
+                    }
+                } catch (gasErr) {}
 
                 if (isStoreClosedRef.current && !isAdminRef.current) {
                     setGroupedProducts([]);
@@ -1019,7 +960,7 @@
                 setIsInitialLoad(false);
                 setIsRefreshing(false);
               }
-          }, [parseRawItemsToGroups, fetchInventorySheetDirect]);
+          }, [parseRawItemsToGroups]);
 
           useEffect(() => {
               try { localStorage.removeItem('ember_grouped_cache_v1'); } catch (e) {}
@@ -1028,15 +969,6 @@
           useEffect(() => {
               fetchSheetData(refreshKey > 0);
           }, [refreshKey, fetchSheetData]);
-
-          useEffect(() => {
-              const autoRefreshTimer = setInterval(() => {
-                  if (!document.hidden && !isStoreClosedRef.current) {
-                      fetchSheetData(false);
-                  }
-              }, 15000);
-              return () => clearInterval(autoRefreshTimer);
-          }, [fetchSheetData]);
 
           useEffect(() => {
               const ref = db.ref('ember_live_data');
@@ -1064,24 +996,18 @@
                       return;
                   } else if (val._live_catalog !== undefined) {
                       const mirrorItems = Array.isArray(val._live_catalog.items) ? val._live_catalog.items : [];
-                      // 만약 이전에 잘못 묶인 단일 알파벳('E', 'N') 그룹이 미러에 들어있다면 무시하고 시트에서 새로 파싱!
-                      const hasBrokenSingleLetterGroup = mirrorItems.some(g => /^[a-zA-Z]$/.test(String(g.name || '').trim()));
-                      if (mirrorItems.length > 0 && !hasBrokenSingleLetterGroup) {
-                          lastFirebaseCatalogTimeRef.current = val._live_catalog.updatedAt || Date.now();
-                          setGroupedProducts(prev => {
-                              if (JSON.stringify(prev) === JSON.stringify(mirrorItems)) return prev;
-                              return mirrorItems;
-                          });
-                          const allValidOpts = mirrorItems.flatMap(g => (g.options || []).map(o => o.originalName));
-                          setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(name => allValidOpts.includes(name)));
-                          setIsInitialLoad(false);
-                      } else {
-                          fetchSheetData(true);
-                      }
+                      lastFirebaseCatalogTimeRef.current = val._live_catalog.updatedAt || Date.now();
+                      setGroupedProducts(prev => {
+                          if (JSON.stringify(prev) === JSON.stringify(mirrorItems)) return prev;
+                          return mirrorItems;
+                      });
+                      const allValidOpts = mirrorItems.flatMap(g => (g.options || []).map(o => o.originalName));
+                      setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(name => allValidOpts.includes(name)));
+                      setIsInitialLoad(false);
                   }
               });
               return () => ref.off();
-          }, [fetchSheetData]);
+          }, []);
 
           const rawGlobalYoutubeUrl = firebaseData._global_config?.youtubeUrl || "";
           const rawGlobalYoutubeId = extractYouTubeId(rawGlobalYoutubeUrl);
