@@ -741,6 +741,9 @@
           const isStoreClosedRef = useRef(true);
           const isConfigLoadedRef = useRef(false);
           const lastFirebaseCatalogTimeRef = useRef(0);
+          // 🧟‍♂️ 좀비 부활 방지용: 삭제한 상품 ID 목록과 전체 초기화 시각을 기억하여 시트 캐시가 옛날 상품을 되살리지 못하게 차단!
+          const deletedGroupIdsRef = useRef(new Set());
+          const lastManualResetTimeRef = useRef(0);
 
           useEffect(() => {
               isAdminRef.current = isAdmin;
@@ -852,6 +855,13 @@
           }, []);
 
           const fetchSheetData = useCallback(async (isManualRefresh = false) => {
+              // 🧟‍♂️ 방금 전체 초기화(비우기)를 눌렀다면 15초 동안은 구글 시트의 느린 캐시를 읽어오지 않도록 원천 차단!
+              if (Date.now() - lastManualResetTimeRef.current < 15000) {
+                  setGroupedProducts([]);
+                  setIsInitialLoad(false);
+                  setIsRefreshing(false);
+                  return;
+              }
               if (!isConfigLoadedRef.current) {
                   try {
                       const cfgSnap = await db.ref('ember_live_data/_global_config').once('value');
@@ -923,7 +933,8 @@
                     return;
                 }
 
-                const groupArray = parseRawItemsToGroups(validRows);
+                // 🧟‍♂️ 관리자가 개별 삭제한 상품 ID는 시트 캐시에 아직 남아있더라도 절대 부활하지 못하도록 필터링!
+                const groupArray = parseRawItemsToGroups(validRows).filter(g => !deletedGroupIdsRef.current.has(g.id));
                 maxKnownOptionsCount.current = validRows.length;
 
                 // 시트에서 읽어온 최신 실시간재고로 Firebase(_live_catalog)의 옛날 데이터를 즉시 덮어씌워 동기화!
@@ -975,7 +986,8 @@
                       setIsInitialLoad(false);
                       return;
                   } else if (val._live_catalog !== undefined) {
-                      const mirrorItems = Array.isArray(val._live_catalog.items) ? val._live_catalog.items : [];
+                      const mirrorItems = (Array.isArray(val._live_catalog.items) ? val._live_catalog.items : [])
+                          .filter(g => g && !deletedGroupIdsRef.current.has(g.id));
                       lastFirebaseCatalogTimeRef.current = val._live_catalog.updatedAt || Date.now();
                       setGroupedProducts(prev => {
                           if (JSON.stringify(prev) === JSON.stringify(mirrorItems)) return prev;
@@ -1633,11 +1645,33 @@
               setGlobalYoutubeInput("");
               setConfirmResetAll(false);
               maxKnownOptionsCount.current = 0;
+              lastManualResetTimeRef.current = Date.now();
+              // 현재 화면에 있던 모든 상품 ID를 삭제 블랙리스트에도 등록하여 시트 캐시 부활 차단
+              groupedProducts.forEach(g => { if (g && g.id) deletedGroupIdsRef.current.add(g.id); });
+              setGroupedProducts([]);
+              setSelectedOptions([]);
+
               const keepClosed = isStoreClosedRef.current;
               try {
                   localStorage.removeItem('ember_grouped_cache_v1');
                   localStorage.removeItem('ember_cart_v3');
               } catch (e) {}
+
+              // 1) 구글 시트의 '실시간재고' 탭도 즉시 빈 배열로 강제 초기화 (좀비 부활의 원천 제거!)
+              const GAS_URL = 'https://script.google.com/macros/s/AKfycbzrMczblUPLxqGESdkZks8osdL-CihDenW94Ae3ODL8u_QhVAZGKrsVI_KchtHjCTFg/exec';
+              const MASTER_ID = '1B8SBMX18_Px1CpRHuDTxqodqudiTrf6NfVoptjHtnGQ';
+              fetch(GAS_URL, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                  body: JSON.stringify({
+                      action: 'save_inventory',
+                      masterId: MASTER_ID,
+                      forceClear: true,
+                      data: []
+                  })
+              }).catch(() => {});
+
+              // 2) Firebase의 _live_catalog 및 이전 미디어 데이터 전체 초기화
               const updates = {
                   '_global_config': {
                       catalogClosedLock: keepClosed,
@@ -1645,6 +1679,7 @@
                   },
                   '_live_catalog': {
                       items: [],
+                      rawCount: 0,
                       updatedAt: Date.now()
                   },
                   '_pre_captures': null
@@ -1655,10 +1690,7 @@
                   }
               });
               db.ref('ember_live_data').update(updates).then(() => {
-                  if (!keepClosed) {
-                      fetchSheetData(true);
-                  }
-                  showToast("🧹 이전 방송 미디어 및 캐시가 초기화되었습니다! (고객 포털 데이터 보존)");
+                  showToast("🧹 이전 방송 상품(구글 시트 실시간재고 + 라인업)이 완전히 삭제되었습니다!");
               });
           };
 
@@ -1694,6 +1726,8 @@
           const handleDeleteProductGroup = (group, e) => {
               if (e) e.stopPropagation();
               if (!group) return;
+              // 🧟‍♂️ 삭제한 상품 ID를 기억하여 구글 시트 캐시가 다시 되살리지 못하게 차단!
+              deletedGroupIdsRef.current.add(group.id);
               if (activeVideo && activeVideo.groupId === group.id) {
                   setActiveVideo(null);
               }
