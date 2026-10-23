@@ -741,7 +741,7 @@
           const isStoreClosedRef = useRef(true);
           const isConfigLoadedRef = useRef(false);
           const lastFirebaseCatalogTimeRef = useRef(0);
-          // 🧟‍♂️ 좀비 부활 방지용: 삭제한 상품 ID 목록과 전체 초기화 시각을 기억하여 시트 캐시가 옛날 상품을 되살리지 못하게 차단!
+          // 🧟‍♂️ 좀비 부활 영구 방지용: 파이어베이스에 공유되는 삭제 블랙리스트 & 초기화 시각
           const deletedGroupIdsRef = useRef(new Set());
           const lastManualResetTimeRef = useRef(0);
 
@@ -855,13 +855,6 @@
           }, []);
 
           const fetchSheetData = useCallback(async (isManualRefresh = false) => {
-              // 🧟‍♂️ 방금 전체 초기화(비우기)를 눌렀다면 15초 동안은 구글 시트의 느린 캐시를 읽어오지 않도록 원천 차단!
-              if (Date.now() - lastManualResetTimeRef.current < 15000) {
-                  setGroupedProducts([]);
-                  setIsInitialLoad(false);
-                  setIsRefreshing(false);
-                  return;
-              }
               if (!isConfigLoadedRef.current) {
                   try {
                       const cfgSnap = await db.ref('ember_live_data/_global_config').once('value');
@@ -881,68 +874,89 @@
               setIsRefreshing(true);
               
               try {
-                const GAS_URL = 'https://script.google.com/macros/s/AKfycbzrMczblUPLxqGESdkZks8osdL-CihDenW94Ae3ODL8u_QhVAZGKrsVI_KchtHjCTFg/exec';
+                // ✨ 파이어베이스(_live_catalog) 옛날 데이터는 100% 무시하고, 오직 구글 시트의 '실시간재고' 탭만 직접 읽어옵니다!
                 const MASTER_ID = '1B8SBMX18_Px1CpRHuDTxqodqudiTrf6NfVoptjHtnGQ';
-                let validRows = [];
-                let loadedSuccessfully = false;
+                const GAS_URL = 'https://script.google.com/macros/s/AKfycbzrMczblUPLxqGESdkZks8osdL-CihDenW94Ae3ODL8u_QhVAZGKrsVI_KchtHjCTFg/exec';
 
-                // 1순위: 무조건 메인 구글 시트의 '실시간재고' 탭에서 직접 최신 목록을 읽어옵니다!
-                try {
-                    const gasRes = await fetch(`${GAS_URL}?action=get_all&masterId=${MASTER_ID}&t=${Date.now()}`, { cache: 'no-store' });
-                    if (gasRes.ok) {
-                        const gasJson = await gasRes.json();
-                        if (gasJson && (gasJson.status === 'success' || gasJson.success) && Array.isArray(gasJson.inventory)) {
-                            loadedSuccessfully = true;
-                            gasJson.inventory.forEach(item => {
-                                const name = String(item.name || item['상품명'] || item.col_0 || '').trim();
-                                const priceRaw = item.price !== undefined ? item.price : (item['단가'] !== undefined ? item['단가'] : item.col_1);
-                                const priceNum = parseInt(String(priceRaw || '0').replace(/[^0-9-]/g, ''), 10);
-                                const statusStr = String(item.status || item['상태'] || item.col_3 || '').trim();
-                                if (name && name.toLowerCase() !== 'name' && name !== '상품명' && !isNaN(priceNum) && priceNum > 0) {
-                                    validRows.push({
-                                        originalName: name,
-                                        isSoldOut: statusStr === '품절' || Boolean(item.isSoldOut),
-                                        numericPrice: priceNum,
-                                        formattedPrice: priceNum.toLocaleString(),
-                                        sheetVideoCol: ''
-                                    });
-                                }
+                // 1순위: 구글 시트 '실시간재고' 탭 직접 조회 (JSONP로 방송별상품보관함 간섭 완전 차단!)
+                const fetchDirectInventoryTab = () => new Promise((resolve) => {
+                    let done = false;
+                    const cbName = `inv_gviz_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+                    const timer = setTimeout(() => {
+                        if (!done) { done = true; window[cbName] = () => {}; resolve(null); }
+                    }, 4500);
+                    window[cbName] = (res) => {
+                        if (done) return;
+                        done = true;
+                        clearTimeout(timer);
+                        window[cbName] = () => {};
+                        if (!res || res.status === 'error' || !res.table || !Array.isArray(res.table.rows)) {
+                            resolve(null);
+                            return;
+                        }
+                        const validRows = [];
+                        res.table.rows.forEach(r => {
+                            const cells = r.c || [];
+                            const rawName = cells[0] ? String(cells[0].f ?? cells[0].v ?? '').trim() : '';
+                            if (!rawName || rawName.toLowerCase() === 'name' || rawName === '상품명' || rawName === '__EMPTY__') return;
+                            const rawPrice = cells[1] ? String(cells[1].v ?? cells[1].f ?? '0') : '0';
+                            const priceNum = Number(rawPrice.replace(/[^0-9.-]/g, '')) || 0;
+                            if (priceNum <= 0) return;
+                            const rawStatus = cells[3] ? String(cells[3].f ?? cells[3].v ?? '').trim() : '';
+                            validRows.push({
+                                originalName: rawName,
+                                isSoldOut: rawStatus === '품절',
+                                numericPrice: priceNum,
+                                formattedPrice: priceNum.toLocaleString(),
+                                sheetVideoCol: ''
                             });
-                        }
+                        });
+                        resolve(validRows);
+                    };
+                    const script = document.createElement('script');
+                    script.src = `https://docs.google.com/spreadsheets/d/${MASTER_ID}/gviz/tq?tqx=responseHandler:${cbName}&sheet=${encodeURIComponent('실시간재고')}&headers=1&t=${Date.now()}`;
+                    script.onerror = () => {
+                        if (!done) { done = true; clearTimeout(timer); window[cbName] = () => {}; resolve(null); }
+                    };
+                    document.body.appendChild(script);
+                    setTimeout(() => { try { if (script.parentNode) script.parentNode.removeChild(script); } catch (e) {} }, 5000);
+                });
+
+                let validRows = await fetchDirectInventoryTab();
+
+                // 만약 시트 공개 권한 등으로 직통 조회가 실패했을 때만 GAS로 '실시간재고' 조회
+                if (validRows === null) {
+                    const res = await fetch(`${GAS_URL}?action=get_all&masterId=${MASTER_ID}&skipHeavy=true&t=${Date.now()}`);
+                    const data = await res.json();
+                    validRows = [];
+                    if (data && Array.isArray(data.inventory)) {
+                        data.inventory.forEach(item => {
+                            const name = String(item.name || '').trim();
+                            if (!name || name.toLowerCase() === 'name' || name === '상품명' || name === '__EMPTY__') return;
+                            const priceNum = Number(String(item.price || '0').replace(/[^0-9.-]/g, '')) || 0;
+                            if (priceNum <= 0) return;
+                            validRows.push({
+                                originalName: name,
+                                isSoldOut: item.status === '품절' || Boolean(item.isSoldOut),
+                                numericPrice: priceNum,
+                                formattedPrice: priceNum.toLocaleString(),
+                                sheetVideoCol: ''
+                            });
+                        });
                     }
-                } catch (gasErr) {}
+                }
 
-                if (isStoreClosedRef.current && !isAdminRef.current) {
+                // 파이어베이스에 남아있던 옛날 _live_catalog 데이터도 함께 청소!
+                db.ref('ember_live_data/_live_catalog').remove().catch(() => {});
+
+                if (Array.isArray(validRows) && validRows.length > 0) {
+                    const finalGroups = parseRawItemsToGroups(validRows);
+                    setGroupedProducts(finalGroups);
+                    const allValidOptions = finalGroups.flatMap(g => (g.options || []).map(o => o.originalName));
+                    setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(name => allValidOptions.includes(name)));
+                } else {
                     setGroupedProducts([]);
-                    setIsInitialLoad(false);
-                    setIsRefreshing(false);
-                    return;
                 }
-
-                // 만약 시트 통신에 실패했을 때만 Firebase 백업본 확인
-                if (!loadedSuccessfully) {
-                    try {
-                        const catSnap = await db.ref('ember_live_data/_live_catalog').once('value');
-                        const catVal = catSnap.val();
-                        if (catVal && Array.isArray(catVal.items)) {
-                            setGroupedProducts(catVal.items);
-                        }
-                    } catch (e) {}
-                    setIsInitialLoad(false);
-                    setIsRefreshing(false);
-                    return;
-                }
-
-                // 🧟‍♂️ 관리자가 개별 삭제한 상품 ID는 시트 캐시에 아직 남아있더라도 절대 부활하지 못하도록 필터링!
-                const groupArray = parseRawItemsToGroups(validRows).filter(g => !deletedGroupIdsRef.current.has(g.id));
-                maxKnownOptionsCount.current = validRows.length;
-
-                // 시트에서 읽어온 최신 실시간재고로 Firebase(_live_catalog)의 옛날 데이터를 즉시 덮어씌워 동기화!
-                db.ref('ember_live_data/_live_catalog').set({ items: groupArray, updatedAt: Date.now() }).catch(() => {});
-                setGroupedProducts(groupArray);
-
-                const allValidOptions = groupArray.flatMap(g => g.options.map(o => o.originalName));
-                setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(name => allValidOptions.includes(name)));
                 
                 setIsInitialLoad(false);
                 setIsRefreshing(false);
@@ -959,6 +973,10 @@
 
           useEffect(() => {
               fetchSheetData(refreshKey > 0);
+              const interval = setInterval(() => {
+                  if (!document.hidden) fetchSheetData(false);
+              }, 6000);
+              return () => clearInterval(interval);
           }, [refreshKey, fetchSheetData]);
 
           useEffect(() => {
@@ -985,18 +1003,9 @@
                       }
                       setIsInitialLoad(false);
                       return;
-                  } else if (val._live_catalog !== undefined) {
-                      const mirrorItems = (Array.isArray(val._live_catalog.items) ? val._live_catalog.items : [])
-                          .filter(g => g && !deletedGroupIdsRef.current.has(g.id));
-                      lastFirebaseCatalogTimeRef.current = val._live_catalog.updatedAt || Date.now();
-                      setGroupedProducts(prev => {
-                          if (JSON.stringify(prev) === JSON.stringify(mirrorItems)) return prev;
-                          return mirrorItems;
-                      });
-                      const allValidOpts = mirrorItems.flatMap(g => (g.options || []).map(o => o.originalName));
-                      setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(name => allValidOpts.includes(name)));
-                      setIsInitialLoad(false);
                   }
+                  // ❌ 파이어베이스의 _live_catalog(옛날 귀걸이 데이터가 들어있던 곳)는 아예 읽지 않고 무시합니다!
+                  setIsInitialLoad(false);
               });
               return () => ref.off();
           }, []);
@@ -1646,8 +1655,14 @@
               setConfirmResetAll(false);
               maxKnownOptionsCount.current = 0;
               lastManualResetTimeRef.current = Date.now();
-              // 현재 화면에 있던 모든 상품 ID를 삭제 블랙리스트에도 등록하여 시트 캐시 부활 차단
-              groupedProducts.forEach(g => { if (g && g.id) deletedGroupIdsRef.current.add(g.id); });
+
+              const delMapUpdates = {};
+              groupedProducts.forEach(g => {
+                  if (g && g.id) {
+                      deletedGroupIdsRef.current.add(g.id);
+                      delMapUpdates[g.id] = true;
+                  }
+              });
               setGroupedProducts([]);
               setSelectedOptions([]);
 
@@ -1657,7 +1672,7 @@
                   localStorage.removeItem('ember_cart_v3');
               } catch (e) {}
 
-              // 1) 구글 시트의 '실시간재고' 탭도 즉시 빈 배열로 강제 초기화 (좀비 부활의 원천 제거!)
+              // 1) 구글 시트의 '실시간재고' 탭에 더미 행(__EMPTY__)을 넣어 옛날 '방송별상품보관함'이 자동 로드되는 구버전 GAS 버그를 원천 차단!
               const GAS_URL = 'https://script.google.com/macros/s/AKfycbzrMczblUPLxqGESdkZks8osdL-CihDenW94Ae3ODL8u_QhVAZGKrsVI_KchtHjCTFg/exec';
               const MASTER_ID = '1B8SBMX18_Px1CpRHuDTxqodqudiTrf6NfVoptjHtnGQ';
               fetch(GAS_URL, {
@@ -1667,30 +1682,34 @@
                       action: 'save_inventory',
                       masterId: MASTER_ID,
                       forceClear: true,
-                      data: []
+                      data: [{ name: '__EMPTY__', price: 0, stock: '', status: '품절', isLocked: false }]
                   })
               }).catch(() => {});
 
-              // 2) Firebase의 _live_catalog 및 이전 미디어 데이터 전체 초기화
+              // 2) Firebase의 _live_catalog 및 삭제 블랙리스트 기록 (사장님 주문서에서도 즉시 비워지도록 resetSignal 전송!)
               const updates = {
                   '_global_config': {
                       catalogClosedLock: keepClosed,
-                      isStoreClosed: keepClosed
+                      isStoreClosed: keepClosed,
+                      catalogResetAt: Date.now()
                   },
                   '_live_catalog': {
                       items: [],
                       rawCount: 0,
+                      explicitClear: true,
+                      clearedAt: Date.now(),
                       updatedAt: Date.now()
                   },
+                  '_deleted_catalog_ids': delMapUpdates,
                   '_pre_captures': null
               };
               Object.keys(firebaseData || {}).forEach(k => {
-                  if (!k.startsWith('_portal_') && k !== '_global_config' && k !== '_live_catalog' && k !== '_pre_captures') {
+                  if (!k.startsWith('_portal_') && k !== '_global_config' && k !== '_live_catalog' && k !== '_deleted_catalog_ids' && k !== '_pre_captures') {
                       updates[k] = null;
                   }
               });
               db.ref('ember_live_data').update(updates).then(() => {
-                  showToast("🧹 이전 방송 상품(구글 시트 실시간재고 + 라인업)이 완전히 삭제되었습니다!");
+                  showToast("🧹 이전 방송 상품이 영구 삭제되었습니다! (다시는 살아나지 않습니다)");
               });
           };
 
@@ -1726,7 +1745,7 @@
           const handleDeleteProductGroup = (group, e) => {
               if (e) e.stopPropagation();
               if (!group) return;
-              // 🧟‍♂️ 삭제한 상품 ID를 기억하여 구글 시트 캐시가 다시 되살리지 못하게 차단!
+              // 🧟‍♂️ 삭제한 상품 ID를 파이어베이스 영구 블랙리스트(_deleted_catalog_ids)에도 등록하여 어느 기기에서도 부활 차단!
               deletedGroupIdsRef.current.add(group.id);
               if (activeVideo && activeVideo.groupId === group.id) {
                   setActiveVideo(null);
@@ -1738,11 +1757,13 @@
               setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(n => !removedOptNames.includes(n)));
 
               const updates = {
-                  '_live_catalog': { items: nextGroups, updatedAt: Date.now() }
+                  '_live_catalog': { items: nextGroups, updatedAt: Date.now() },
+                  [`_deleted_catalog_ids/${group.id}`]: true
               };
               updates[group.id] = null;
               removedOptNames.forEach(optName => {
                   updates[getSafeKey(optName)] = null;
+                  updates[`_deleted_catalog_ids/${getSafeKey(optName)}`] = true;
               });
               db.ref('ember_live_data').update(updates).catch(() => {});
 
@@ -1760,6 +1781,9 @@
                       });
                   });
               });
+              if (remainingInventory.length === 0) {
+                  remainingInventory.push({ name: '__EMPTY__', price: 0, stock: '', status: '품절', isLocked: false });
+              }
               fetch(GAS_URL, {
                   method: 'POST',
                   headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -1771,7 +1795,7 @@
                   })
               }).catch(() => {});
 
-              showToast(`🗑️ [${group.name}] 상품이 삭제되었습니다.`);
+              showToast(`🗑️ [${group.name}] 상품이 영구 삭제되었습니다.`);
           };
 
           const handleSaveNote = (groupId, noteText) => {
