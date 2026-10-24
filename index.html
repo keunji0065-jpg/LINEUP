@@ -900,7 +900,7 @@
               try {
                 // ✨ 파이어베이스(_live_catalog) 옛날 데이터는 100% 무시하고, 오직 구글 시트의 '실시간재고' 탭만 직접 읽어옵니다!
                 const MASTER_ID = '1B8SBMX18_Px1CpRHuDTxqodqudiTrf6NfVoptjHtnGQ';
-                const GAS_URL = 'https://script.google.com/macros/s/AKfycbzrMczblUPLxqGESdkZks8osdL-CihDenW94Ae3ODL8u_QhVAZGKrsVI_KchtHjCTFg/exec';
+                const GAS_URL = 'https://script.google.com/macros/s/AKfycbx_kCIKu48TAyTmxSv0lu_DUk-rPeth_v0dDf9QCDC03cHEX43Zd3inDJ3Q6cFv87Q/exec';
 
                 // 1순위: 구글 시트 '실시간재고' 탭 직접 조회 (JSONP로 방송별상품보관함 간섭 완전 차단!)
                 const fetchDirectInventoryTab = () => new Promise((resolve) => {
@@ -1270,7 +1270,7 @@
               const nextState = !isStoreClosed;
               isStoreClosedRef.current = nextState;
               isConfigLoadedRef.current = true;
-              const GAS_URL = 'https://script.google.com/macros/s/AKfycbzrMczblUPLxqGESdkZks8osdL-CihDenW94Ae3ODL8u_QhVAZGKrsVI_KchtHjCTFg/exec';
+              const GAS_URL = 'https://script.google.com/macros/s/AKfycbx_kCIKu48TAyTmxSv0lu_DUk-rPeth_v0dDf9QCDC03cHEX43Zd3inDJ3Q6cFv87Q/exec';
               const MASTER_ID = '1B8SBMX18_Px1CpRHuDTxqodqudiTrf6NfVoptjHtnGQ';
 
               if (nextState) {
@@ -1739,7 +1739,7 @@
               } catch (e) {}
 
               // 1) 구글 시트의 '실시간재고' 탭에 더미 행(__EMPTY__)을 넣어 옛날 '방송별상품보관함'이 자동 로드되는 구버전 GAS 버그를 원천 차단!
-              const GAS_URL = 'https://script.google.com/macros/s/AKfycbzrMczblUPLxqGESdkZks8osdL-CihDenW94Ae3ODL8u_QhVAZGKrsVI_KchtHjCTFg/exec';
+              const GAS_URL = 'https://script.google.com/macros/s/AKfycbx_kCIKu48TAyTmxSv0lu_DUk-rPeth_v0dDf9QCDC03cHEX43Zd3inDJ3Q6cFv87Q/exec';
               const MASTER_ID = '1B8SBMX18_Px1CpRHuDTxqodqudiTrf6NfVoptjHtnGQ';
               fetch(GAS_URL, {
                   method: 'POST',
@@ -1833,7 +1833,7 @@
               });
               db.ref('ember_live_data').update(updates).catch(() => {});
 
-              const GAS_URL = 'https://script.google.com/macros/s/AKfycbzrMczblUPLxqGESdkZks8osdL-CihDenW94Ae3ODL8u_QhVAZGKrsVI_KchtHjCTFg/exec';
+              const GAS_URL = 'https://script.google.com/macros/s/AKfycbx_kCIKu48TAyTmxSv0lu_DUk-rPeth_v0dDf9QCDC03cHEX43Zd3inDJ3Q6cFv87Q/exec';
               const MASTER_ID = '1B8SBMX18_Px1CpRHuDTxqodqudiTrf6NfVoptjHtnGQ';
               const remainingInventory = [];
               nextGroups.forEach(g => {
