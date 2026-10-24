@@ -898,10 +898,15 @@
                             return;
                         }
                         const validRows = [];
+                        let hasExplicitEmptyMarker = false;
                         res.table.rows.forEach(r => {
                             const cells = r.c || [];
                             const rawName = cells[0] ? String(cells[0].f ?? cells[0].v ?? '').trim() : '';
-                            if (!rawName || rawName.toLowerCase() === 'name' || rawName === '상품명' || rawName === '__EMPTY__') return;
+                            if (rawName === '__EMPTY__') {
+                                hasExplicitEmptyMarker = true;
+                                return;
+                            }
+                            if (!rawName || rawName.toLowerCase() === 'name' || rawName === '상품명') return;
                             const rawPrice = cells[1] ? String(cells[1].v ?? cells[1].f ?? '0') : '0';
                             const priceNum = Number(rawPrice.replace(/[^0-9.-]/g, '')) || 0;
                             if (priceNum <= 0) return;
@@ -914,7 +919,7 @@
                                 sheetVideoCol: ''
                             });
                         });
-                        resolve(validRows);
+                        resolve({ validRows, hasExplicitEmptyMarker });
                     };
                     const script = document.createElement('script');
                     script.src = `https://docs.google.com/spreadsheets/d/${MASTER_ID}/gviz/tq?tqx=responseHandler:${cbName}&sheet=${encodeURIComponent('실시간재고')}&headers=1&t=${Date.now()}`;
@@ -925,7 +930,9 @@
                     setTimeout(() => { try { if (script.parentNode) script.parentNode.removeChild(script); } catch (e) {} }, 5000);
                 });
 
-                let validRows = await fetchDirectInventoryTab();
+                const directRes = await fetchDirectInventoryTab();
+                let validRows = directRes ? directRes.validRows : null;
+                let isExplicitlyCleared = directRes ? directRes.hasExplicitEmptyMarker : false;
 
                 // 만약 시트 공개 권한 등으로 직통 조회가 실패했을 때만 GAS로 '실시간재고' 조회
                 if (validRows === null) {
@@ -935,7 +942,11 @@
                     if (data && Array.isArray(data.inventory)) {
                         data.inventory.forEach(item => {
                             const name = String(item.name || '').trim();
-                            if (!name || name.toLowerCase() === 'name' || name === '상품명' || name === '__EMPTY__') return;
+                            if (name === '__EMPTY__') {
+                                isExplicitlyCleared = true;
+                                return;
+                            }
+                            if (!name || name.toLowerCase() === 'name' || name === '상품명') return;
                             const priceNum = Number(String(item.price || '0').replace(/[^0-9.-]/g, '')) || 0;
                             if (priceNum <= 0) return;
                             validRows.push({
@@ -957,9 +968,11 @@
                     setGroupedProducts(finalGroups);
                     const allValidOptions = finalGroups.flatMap(g => (g.options || []).map(o => o.originalName));
                     setSelectedOptions(prev => (Array.isArray(prev) ? prev : []).filter(name => allValidOptions.includes(name)));
+                } else if (isExplicitlyCleared) {
+                    // 사장님 주문서에서 [비우기]를 눌러 '__EMPTY__' 마커가 기록된 경우에는 즉시 화면도 비움!
+                    setGroupedProducts([]);
+                    setSelectedOptions([]);
                 }
-                // 🛡️ 핵심: 구글 시트가 저장 중인 찰나(0.5초)이거나 일시적 통신 지연으로 빈 배열이 오더라도,
-                // 현재 화면에 이미 떠 있는 생방송 상품 목록을 절대 지우지 않고 그대로 유지합니다!
                 
                 setIsInitialLoad(false);
                 setIsRefreshing(false);
