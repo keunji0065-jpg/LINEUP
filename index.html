@@ -748,6 +748,11 @@
           const [confirmResetAll, setConfirmResetAll] = useState(false);
           const [unavailableYtIds, setUnavailableYtIds] = useState({});
           const [selectedPreCapId, setSelectedPreCapId] = useState(null);
+
+          // 📢 고객용 공지사항 팝업 & 관리자 수정 모달 상태
+          const [isNoticePopupOpen, setIsNoticePopupOpen] = useState(false);
+          const [isNoticeEditModalOpen, setIsNoticeEditModalOpen] = useState(false);
+          const [editNoticeForm, setEditNoticeForm] = useState({ enabled: false, title: '📢 엠버언니 공지사항', content: '' });
           
           const adminClickCount = useRef(0);
           const adminTimer = useRef(null);
@@ -906,7 +911,7 @@
               try {
                 // ✨ 파이어베이스(_live_catalog) 옛날 데이터는 100% 무시하고, 오직 구글 시트의 '실시간재고' 탭만 직접 읽어옵니다!
                 const MASTER_ID = '1B8SBMX18_Px1CpRHuDTxqodqudiTrf6NfVoptjHtnGQ';
-                const GAS_URL = 'https://script.google.com/macros/s/AKfycbyVKpxs5-zeLVKZ3cBXrma01YbGZUYdubGeeo6m-LoXnoE810HUc1lNJUBnJfz4Kgqg/exec';
+                const GAS_URL = 'https://script.google.com/macros/s/AKfycbzckcaobzdpOmXyBb2UHIatOk7vDJhs344fyOc7e8RKYZ5WS8JKXrdSQPpWz0jTWN8a/exec';
 
                 // 1순위: 구글 시트 '실시간재고' 탭 직접 조회 (전역 Script error 방지를 위해 fetch 사용)
                 const fetchDirectInventoryTab = async () => {
@@ -1023,6 +1028,23 @@
                   if (val._global_config?.youtubeUrl !== undefined) {
                       setGlobalYoutubeInput(val._global_config.youtubeUrl);
                   }
+                  const nc = val._global_config?.customerNotice;
+                  if (nc && typeof nc === 'object') {
+                      setEditNoticeForm({
+                          enabled: Boolean(nc.enabled),
+                          title: nc.title || '📢 엠버언니 공지사항',
+                          content: nc.content || ''
+                      });
+                      if (nc.enabled && String(nc.content || '').trim() !== '') {
+                          const todayStr = new Date().toLocaleDateString('ko-KR');
+                          const dismissKey = `ember_notice_hide_${nc.updatedAt || 0}`;
+                          let isDismissedToday = false;
+                          try { isDismissedToday = localStorage.getItem(dismissKey) === todayStr; } catch (e) {}
+                          if (!isDismissedToday) setIsNoticePopupOpen(true);
+                      } else {
+                          setIsNoticePopupOpen(false);
+                      }
+                  }
                   const closedNow = Boolean(
                       val._global_config?.catalogClosedLock !== undefined
                           ? val._global_config.catalogClosedLock
@@ -1121,6 +1143,28 @@
                   : firebaseData._global_config?.isStoreClosed
           );
           const isPhotoOnlyMode = Boolean(firebaseData._global_config?.isPhotoOnlyMode);
+          const customerNotice = firebaseData._global_config?.customerNotice || { enabled: false, title: '📢 엠버언니 공지사항', content: '', updatedAt: 0 };
+
+          const handleDismissCatalogNoticeToday = () => {
+              try {
+                  const todayStr = new Date().toLocaleDateString('ko-KR');
+                  localStorage.setItem(`ember_notice_hide_${customerNotice.updatedAt || 0}`, todayStr);
+              } catch (e) {}
+              setIsNoticePopupOpen(false);
+          };
+
+          const handleSaveCatalogNotice = async (e) => {
+              if (e && e.preventDefault) e.preventDefault();
+              const payload = {
+                  enabled: Boolean(editNoticeForm.enabled),
+                  title: String(editNoticeForm.title || '📢 엠버언니 공지사항').trim(),
+                  content: String(editNoticeForm.content || '').trim(),
+                  updatedAt: Date.now()
+              };
+              await db.ref('ember_live_data/_global_config/customerNotice').set(payload);
+              setIsNoticeEditModalOpen(false);
+              showToast(payload.enabled ? '📢 공지사항 팝업이 즉시 반영되었습니다!' : '공지사항 팝업이 숨김(OFF) 처리되었습니다.');
+          };
 
           // 영상(유튜브)이나 개별 상품 사진이 하나도 등록되어 있지 않으면 기본으로 깔끔한 '글씨형(text)'으로 표시하고, 영상/사진이 등록되면 자동으로 '영상/사진형(image)'으로 전환!
           useEffect(() => {
@@ -1269,7 +1313,7 @@
               const nextState = !isStoreClosed;
               isStoreClosedRef.current = nextState;
               isConfigLoadedRef.current = true;
-              const GAS_URL = 'https://script.google.com/macros/s/AKfycbyVKpxs5-zeLVKZ3cBXrma01YbGZUYdubGeeo6m-LoXnoE810HUc1lNJUBnJfz4Kgqg/exec';
+              const GAS_URL = 'https://script.google.com/macros/s/AKfycbzckcaobzdpOmXyBb2UHIatOk7vDJhs344fyOc7e8RKYZ5WS8JKXrdSQPpWz0jTWN8a/exec';
               const MASTER_ID = '1B8SBMX18_Px1CpRHuDTxqodqudiTrf6NfVoptjHtnGQ';
 
               if (nextState) {
@@ -1736,7 +1780,7 @@
               } catch (e) {}
 
               // 1) 구글 시트의 '실시간재고' 탭에 더미 행(__EMPTY__)을 넣어 옛날 '방송별상품보관함'이 자동 로드되는 구버전 GAS 버그를 원천 차단!
-              const GAS_URL = 'https://script.google.com/macros/s/AKfycbyVKpxs5-zeLVKZ3cBXrma01YbGZUYdubGeeo6m-LoXnoE810HUc1lNJUBnJfz4Kgqg/exec';
+              const GAS_URL = 'https://script.google.com/macros/s/AKfycbzckcaobzdpOmXyBb2UHIatOk7vDJhs344fyOc7e8RKYZ5WS8JKXrdSQPpWz0jTWN8a/exec';
               const MASTER_ID = '1B8SBMX18_Px1CpRHuDTxqodqudiTrf6NfVoptjHtnGQ';
               fetch(GAS_URL, {
                   method: 'POST',
@@ -1830,7 +1874,7 @@
               });
               db.ref('ember_live_data').update(updates).catch(() => {});
 
-              const GAS_URL = 'https://script.google.com/macros/s/AKfycbyVKpxs5-zeLVKZ3cBXrma01YbGZUYdubGeeo6m-LoXnoE810HUc1lNJUBnJfz4Kgqg/exec';
+              const GAS_URL = 'https://script.google.com/macros/s/AKfycbzckcaobzdpOmXyBb2UHIatOk7vDJhs344fyOc7e8RKYZ5WS8JKXrdSQPpWz0jTWN8a/exec';
               const MASTER_ID = '1B8SBMX18_Px1CpRHuDTxqodqudiTrf6NfVoptjHtnGQ';
               const remainingInventory = [];
               nextGroups.forEach(g => {
@@ -2148,6 +2192,15 @@
                     </button>
                   )}
                   <h1 className="text-lg font-serif text-white tracking-[0.2em] uppercase">EMBER</h1>
+                  {customerNotice.enabled && customerNotice.content && (
+                      <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setIsNoticePopupOpen(true); }}
+                          className="absolute right-3 px-2 py-1 bg-amber-400 hover:bg-amber-300 text-black text-[10px] font-extrabold rounded flex items-center gap-1 shadow-sm transition"
+                      >
+                          <span>📢 공지</span>
+                      </button>
+                  )}
                 </header>
 
                 {isAdmin && (
@@ -2348,6 +2401,17 @@
                                       )}
                                   </div>
                                   <div className="flex items-center gap-1 shrink-0">
+                                      <button
+                                          type="button"
+                                          onClick={(e) => { e.stopPropagation(); setIsNoticeEditModalOpen(true); }}
+                                          className={`px-2 py-0.5 rounded text-[10px] font-extrabold border transition ${
+                                              customerNotice.enabled
+                                                  ? 'bg-amber-400 text-black border-amber-300'
+                                                  : 'bg-slate-800 text-slate-200 border-slate-600 hover:bg-slate-700'
+                                          }`}
+                                      >
+                                          📢 공지 {customerNotice.enabled ? 'ON' : 'OFF'}
+                                      </button>
                                       <button
                                           type="button"
                                           onClick={handleTogglePhotoOnlyMode}
@@ -2859,6 +2923,77 @@
                                 <button onClick={() => setShowAuthModal(false)} className="flex-1 py-2 bg-slate-100 text-slate-600 font-bold text-sm rounded-lg">취소</button>
                                 <button onClick={verifyAdmin} className="flex-1 py-2 bg-black text-white font-bold text-sm rounded-lg">확인</button>
                             </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* 📢 고객용 공지사항 팝업 모달 */}
+                {isNoticePopupOpen && customerNotice.enabled && customerNotice.content && (
+                    <div className="fixed inset-0 z-[110] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in" onClick={() => setIsNoticePopupOpen(false)}>
+                        <div className="bg-white w-full max-w-[350px] rounded-2xl shadow-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
+                            <div className="bg-black text-white px-4 py-3 flex items-center justify-between">
+                                <div className="flex items-center gap-2 min-w-0">
+                                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0"></span>
+                                    <h3 className="font-extrabold text-sm truncate">{customerNotice.title || '📢 엠버언니 공지사항'}</h3>
+                                </div>
+                                <button onClick={() => setIsNoticePopupOpen(false)} className="text-slate-400 hover:text-white text-lg leading-none">&times;</button>
+                            </div>
+                            <div className="p-4 overflow-y-auto text-[13px] text-slate-800 font-semibold leading-relaxed whitespace-pre-wrap break-words bg-amber-50/20">
+                                {customerNotice.content}
+                            </div>
+                            <div className="px-3.5 py-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
+                                <button onClick={handleDismissCatalogNoticeToday} className="text-xs font-bold text-slate-500 hover:text-slate-800 px-2 py-1">오늘 하루 보지 않기</button>
+                                <button onClick={() => setIsNoticePopupOpen(false)} className="px-4 py-2 bg-black text-white text-xs font-extrabold rounded-lg shadow-sm">확인 (닫기)</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* 🛠️ 관리자용 공지사항 수정 모달 */}
+                {isNoticeEditModalOpen && (
+                    <div className="fixed inset-0 z-[120] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in" onClick={() => setIsNoticeEditModalOpen(false)}>
+                        <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-5" onClick={e => e.stopPropagation()}>
+                            <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-200">
+                                <h3 className="font-extrabold text-sm text-slate-900">📢 고객 공지사항 팝업 설정</h3>
+                                <button onClick={() => setIsNoticeEditModalOpen(false)} className="text-slate-400 hover:text-black text-xl leading-none">&times;</button>
+                            </div>
+                            <form onSubmit={handleSaveCatalogNotice} className="space-y-3 text-xs">
+                                <div className="flex items-center justify-between p-2.5 bg-slate-50 rounded-lg border border-slate-200">
+                                    <span className="font-extrabold text-slate-700">고객 접속 시 팝업 표시</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setEditNoticeForm(p => ({ ...p, enabled: !p.enabled }))}
+                                        className={`px-3 py-1 rounded-md font-extrabold transition ${
+                                            editNoticeForm.enabled ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
+                                        }`}
+                                    >
+                                        {editNoticeForm.enabled ? '🟢 켜짐 (ON)' : '⚫ 꺼짐 (OFF)'}
+                                    </button>
+                                </div>
+                                <div>
+                                    <label className="block font-bold text-slate-700 mb-1">공지 제목</label>
+                                    <input
+                                        type="text"
+                                        value={editNoticeForm.title}
+                                        onChange={e => setEditNoticeForm(p => ({ ...p, title: e.target.value }))}
+                                        className="w-full border border-slate-300 rounded-lg px-3 py-2 font-bold outline-none focus:border-black"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block font-bold text-slate-700 mb-1">공지 내용</label>
+                                    <textarea
+                                        value={editNoticeForm.content}
+                                        onChange={e => setEditNoticeForm(p => ({ ...p, content: e.target.value }))}
+                                        rows={6}
+                                        placeholder="안내할 공지 내용을 입력해 주세요."
+                                        className="w-full border border-slate-300 rounded-lg px-3 py-2 font-semibold outline-none focus:border-black resize-y leading-relaxed"
+                                    />
+                                </div>
+                                <div className="flex gap-2 pt-1">
+                                    <button type="button" onClick={() => setIsNoticeEditModalOpen(false)} className="flex-1 py-2.5 bg-slate-100 text-slate-600 font-bold rounded-lg">취소</button>
+                                    <button type="submit" className="flex-1 py-2.5 bg-black text-white font-extrabold rounded-lg">저장 및 즉시 반영</button>
+                                </div>
+                            </form>
                         </div>
                     </div>
                 )}
